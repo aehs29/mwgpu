@@ -28,11 +28,15 @@
 using namespace std;
 
 
+int sizeBuffer;
+
 
 float *nodes;
 GLshort *elem;
 float *eigenVals;
 float *eigenVecs;
+int *fixed_nodes;
+float *d_nodes;
 
 
 // Declare Coefficients 
@@ -46,8 +50,10 @@ float h;
 int elem_count, elem_nodes;
 int node_count, node_dimensions;
 int eigencount;
+unsigned int fixed_nodes_count;
 
 
+bool render=true;
 float red=1.0f, blue=0.0f, green=0.0f;
 
 // angle for rotating triangle
@@ -61,6 +67,8 @@ int yOrigin=-1;
 
 float scale=1.0;
 cudaGraphicsResource *resources[1];
+//cudaGraphicsResource *original_nodes[1];
+
 
 //extern "C" bool MatrixMult (float *h_A, float *h_B, float *h_C , int RowsA, int ColsA, int RowsB, int ColsB, const int block_size);
 
@@ -69,7 +77,13 @@ cudaGraphicsResource *resources[1];
 extern "C" bool runTest(const int argc, const char **argv, float * buffer, float *u,  int node_count, float scale);
 extern "C" void map_texture(void *cuda_data, size_t size,cudaGraphicsResource *resource);
 
-extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size);
+extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float *buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float scale);
+
+extern "C" void* allocate_GPUnodes(float *d_nodes, float *nodes, unsigned int node_count, unsigned int node_dimensions);
+extern "C" bool free_GPUnodes(float *d_nodes);
+
+
+
 
 void DestroyShaders(void);
 void DestroyVBO(void);
@@ -207,29 +221,7 @@ void RenderFunction(void)
    
 
 
-	// Get displacement
 
-/* Parallel Code*/
-
-/*
-	const int block_size=16;
-	bool disp ;
-	disp = displacement (q, qo, qd, qdo, F, Fo, Ro, alpha, alphaI, beta, gama, eigenVecs, h, u, eigencount, node_count, node_dimensions, block_size);
-*/
-
-/*Serial Code*/
-
-	displacement_serial();
-
-
-
-
-
-	// Copy Old values
-	std::copy(qd,qd+eigencount,qdo);
-	std::copy(q,q+eigencount,qo);
-//	std::copy(R,R+tot_rowCount,Ro);
-	std::copy(F,F+(node_count*node_dimensions),Fo);
 
 
 
@@ -241,13 +233,52 @@ void RenderFunction(void)
 
 	if (cudaGraphicsMapResources(1, resources,0) != cudaSuccess)
         printf("Resource mapping failed...\n");
+	// if (cudaGraphicsMapResources(1, original_nodes,0) != cudaSuccess)
+    //     printf("Resource mapping failed...\n");
 	if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &siz, *resources) !=cudaSuccess)
 	    printf("Resource pointer mapping failed...\n");
+	// if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat_original, &siz, *original_nodes) !=cudaSuccess)
+	//     printf("Resource pointer mapping failed...\n");
 
 
+
+	// Get displacement
+
+/* Parallel Code*/
+
+
+	const int block_size=16;
+	bool disp ;
+//	long * uAdd;
+
+	if(render==true){
+		disp = displacement (q, qo, qd, qdo, F, Fo, Ro, alpha, alphaI, beta, gama, eigenVecs, h, u, eigencount, node_count, node_dimensions, block_size, cuda_dat, nodes, fixed_nodes, fixed_nodes_count, scale);
+
+//	free(u);
+//	u = new float[node_count*node_dimensions];
+
+
+	//printf("Address:%l\n",uAdd);
+
+
+/*Serial Code*/
+
+//	displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, node_count, node_dimensions);
+
+
+
+
+	// Copy Old values
+	std::copy(qd,qd+eigencount,qdo);
+	std::copy(q,q+eigencount,qo);
+//	std::copy(R,R+tot_rowCount,Ro);
+	std::copy(F,F+((node_count-fixed_nodes_count)*node_dimensions),Fo);
+
+
+	}
 
 	// TODO add u (displaement)
-	bTestResult = runTest(0, (const char **)"", cuda_dat, u, node_count,scale);
+//	bTestResult = runTest(0, (const char **)"", cuda_dat, u, node_count,scale);
 scale=1.0;
 
 
@@ -265,7 +296,6 @@ cudaGraphicsUnmapResources(1, resources);
 
 	glLoadIdentity();
 
-
 	glRotatef(angle, 0.0f, 1.0f, 0.0f);
 	glRotatef(angleX, 1.0f, 0.0f, 0.0f);
 
@@ -282,11 +312,15 @@ cudaGraphicsUnmapResources(1, resources);
 
 
 
-glColor3f(1.0f,1.0f,0.0f);
-glDrawElements(GL_QUAD_STRIP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
+glColor3f(red,green,blue);
+// glDrawElements(GL_QUAD_STRIP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
+glDrawElements(GL_TRIANGLE_STRIP, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
+//glDrawElements(GL_TRIANGLE_STRIP, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
 
  glColor3f(1.0f,1.0f,1.0f);
-glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
+//glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
+glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
+//glDrawElements(GL_LINES, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
 
 
 	glutSwapBuffers();
@@ -603,6 +637,10 @@ cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, elem_count*elem_nodes*sizeof(elem),elem, GL_STATIC_DRAW);
 
+	glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, GL_BUFFER_SIZE, &sizeBuffer);
+
+
+
 /*	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[1]);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(AlternateIndices), AlternateIndices, GL_STATIC_DRAW);
 
@@ -649,6 +687,8 @@ GLenum ErrorCheckValue = glGetError();
 	glGenBuffers(2, IndexBufferId);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, elem_count*elem_nodes*sizeof(elem),elem, GL_STATIC_DRAW);
+
+
 
 /*	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[1]);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(AlternateIndices), AlternateIndices, GL_STATIC_DRAW);
@@ -760,6 +800,12 @@ void processNormalKeys(unsigned char key, int x, int y) {
 
 	if (key == 27)
 		exit(0);
+	if (key==32){
+		if(render==true)
+			render=false;
+		else
+			render=true;
+	}
 }
 
 
@@ -767,22 +813,25 @@ void processNormalKeys(unsigned char key, int x, int y) {
 void processSpecialKeys(int key, int x, int y) {
 
 	switch(key) {
-		case GLUT_KEY_F1 :
-				red = 1.0;
-				green = 0.0;
-				blue = 0.0; break;
-		case GLUT_KEY_F2 :
-				red = 0.0;
-				green = 1.0;
-				blue = 0.0; break;
-		case GLUT_KEY_F3 :
-				red = 0.0;
-				green = 0.0;
-				blue = 1.0; break;
-		case GLUT_KEY_F4 :
-				red = 1.0;
-				green = 1.0;
-				blue = 1.0; break;
+	case GLUT_KEY_F1 :
+		red = 1.0;
+		green = 0.0;
+		blue = 0.0; 
+		break;
+	case GLUT_KEY_F2 :
+		red = 0.0;
+		green = 1.0;
+		blue = 0.0; break;
+	case GLUT_KEY_F3 :
+		red = 0.0;
+		green = 0.0;
+		blue = 1.0; break;
+	case GLUT_KEY_F4 :
+		red = 1.0;
+		green = 1.0;
+		blue = 1.0; break;
+
+
 		case GLUT_KEY_LEFT : deltaAngle = -0.35f; break;
 		case GLUT_KEY_RIGHT : deltaAngle = 0.35f; break;
 		case GLUT_KEY_UP : deltaAngleX = -0.35f; break;
@@ -819,32 +868,33 @@ void mouseButton(int button, int state, int x, int y) {
 
 
 // Wheel reports as button 3(scroll up) and button 4(scroll down)
-	   if ((button == 3) || (button == 4)) // It's a wheel event
-	   {
-	       // Each wheel event reports like a button click, GLUT_DOWN then GLUT_UP
+	if ((button == 3) || (button == 4)) // It's a wheel event
+	{
+		// Each wheel event reports like a button click, GLUT_DOWN then GLUT_UP
 //	       if (state == GLUT_UP) return; // Disregard redundant GLUT_UP events
 //	       printf("Scroll %s At %d %d\n", (button == 3) ? "Up" : "Down", x, y);
-		   //if (state == GLUT_UP)
+		//if (state == GLUT_UP)
 		//	deltaMove = 0.0f;	
-		   //else{
-	if(button==3){
-		//deltaMove = 3.0f;
-		//x += deltaMove * lx * 0.1f;
-		//z += deltaMove * lz * 0.1f;
-		scale=1.2;
+		//else{
+		if(button==3){
+			//deltaMove = 3.0f;
+			//x += deltaMove * lx * 0.1f;
+			//z += deltaMove * lz * 0.1f;
+			scale=1.2;
+		}
+		else if(button==4){
+			//deltaMove = -3.0f;
+			//x += deltaMove * lx * 0.1f;
+			//z += deltaMove * lz * 0.1f;
+			scale=0.8;
+		}
 	}
-	else if(button==4){
-		//deltaMove = -3.0f;
-		//x += deltaMove * lx * 0.1f;
-		//z += deltaMove * lz * 0.1f;
-		scale=0.8;
-	}
-	   }
 
 	//else{  // normal button event
 	//       printf("Button %s At %d %d\n", (state == GLUT_DOWN) ? "Down" : "Up", x, y);
 	   //  }
 	// only start motion if the left button is pressed
+
 	if (button == GLUT_LEFT_BUTTON) {
 
 		// when the button is released
@@ -928,7 +978,7 @@ int main(int argc, char **argv)
 
 	//CreateShaders();
 	//CreateVBO_CUDA();
-	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+	glClearColor(0.25f, 0.25f, 0.25f, 0.0f);
 
 
 /*#########---------Ends OpenGL Init------------#########*/
@@ -943,7 +993,7 @@ int main(int argc, char **argv)
 	extern int optind;
 	int c, err = 0; 
 	int nflag=0, kflag=0;
-	string ename,nname,kname,eigenvec_name;
+	string ename,nname,kname,eigenvec_name, fixedname;
 	static char usage[] = "usage: %s -n Node_filename [-k eigen_filename] \n";
 
 	while ((c = getopt(argc, argv, "n:k:")) != -1)
@@ -958,7 +1008,9 @@ int main(int argc, char **argv)
 			kname.append(optarg);
 			kname.append(".csv");
 			eigenvec_name.append(optarg);
-			eigenvec_name.append("vec.csv");
+			eigenvec_name.append("_vec.csv");
+			fixedname.append(optarg);
+			fixedname.append("_fixed.csv");
 			break;
 		case 'k':
 			kflag = 1;
@@ -1320,6 +1372,78 @@ string line;
 
 
 
+// Fixed Nodes
+
+
+	// No need for columns in Fixed Nodes
+// Getfile handle
+	std::ifstream fixed_nodes_rows(fixedname.c_str());
+	std::ifstream fixed_nodes_file(fixedname.c_str());
+    row_count=0;
+	//std::string line;	
+
+// Read whole file to get row and count
+	 while (std::getline(fixed_nodes_rows,line)){
+	// 	if(row_count==1){
+	// 		std::stringstream lineStream(line);
+	// 		std::string colVal;
+	// 		while(std::getline(lineStream,colVal,',')){
+	// 			col_count++;
+	// 		}
+	// 	}
+
+		row_count++;
+		//	std::cout<<line<<"\t";
+//		std::cout<<row_count<<"\n";
+	}
+
+
+	// Print debug values
+	fixed_nodes_count=row_count;
+//	tot_colCount=col_count;
+
+	// std::cout<<tot_colCount<<"\n";
+
+	// Allocate arrays
+	fixed_nodes=new int[fixed_nodes_count];
+	// eigenVals=new float[tot_rowCount*tot_colCount];
+
+	row_count=0;				// reset value
+
+	// Read file to initialize array
+	while (std::getline(fixed_nodes_file,line)){
+    // Get rid of carriage return
+		if(line[line.length()-1]=='\r')
+			line[line.length()-1]='\0';
+		std::stringstream lineStream(line);
+		std::string colVal;
+		
+		// Reset col value
+		//col_count=0;
+
+		// Separate values by ','
+		while(std::getline(lineStream,colVal,',')){
+			if(colVal.length()>0){ // Could assert also
+				// Convert char* to float
+				char *p;
+				int converted = strtol(colVal.c_str(),&p,10);
+				if (*p){}
+				else{
+					fixed_nodes[row_count]=converted-1;
+					//std::cout<<eigenVals[row_count]<<"\n";
+					// eigenVals[(tot_colCount*row_count)+col_count]=converted;
+					// Print it to check if its correct
+					// std::cout<<(tot_colCount*row_count)+col_count<<"\t"<<converted<<"\n";
+					// std::cout<<eigenVals[(tot_colCount*row_count)+col_count]<<"\t"<<converted<<"\n";
+				}
+			}
+			//	col_count++;
+		}
+		row_count++;
+	}
+
+
+
 /*#########---------Ends File Loading---------------#########*/
 
 
@@ -1382,8 +1506,8 @@ string line;
 
 // Allocate vectors
 // F and u node dimensioned all others EigenVals dimensioned
-	F = new float[node_count*node_dimensions];
-	Fo = new float[node_count*node_dimensions];
+	F = new float[(node_count-fixed_nodes_count)*node_dimensions];
+	Fo = new float[(node_count-fixed_nodes_count)*node_dimensions];
 	q = new float[tot_rowCount];
 	qo = new float[tot_rowCount];
 	qd = new float[tot_rowCount];
@@ -1395,20 +1519,20 @@ string line;
 
 
 	// Some force constant
-	const float force=0.00002;
+	const float force=0.03;
 	// Delcare F in only 1 direction
-	for (int i=0;i<node_count*node_dimensions;i++){
-		if(3-(i%3)==2)
+	for (int i=0;i<(node_count-fixed_nodes_count)*node_dimensions;i++){
+		if(3-(i%3)==1)
 			F[i]=force;
 		else
 			F[i]=0;
-			// F[i]=force;
+		// F[i]=force;
 		u[i]=0;
 		//	std::cout<<F[i]<<",";
 	}
 
 	// Copy F to Fo
-	std::copy(F,F+(node_count*node_dimensions),Fo);
+	std::copy(F,F+((node_count-fixed_nodes_count)*node_dimensions),Fo);
 
 	// For loop to initialize all other vectors (all 0's)
 	for (int i=0;i<tot_rowCount;i++){
@@ -1451,10 +1575,14 @@ string line;
 
 //	int abc=1;
 //	bool a = runTest2(0, (const char **)"", abc);
+
+//	allocate_GPUnodes(d_nodes, nodes, node_count, node_dimensions);
 	
 
 
 	glutMainLoop();
+
+//	free_GPUnodes(d_nodes);
 
 	cudaDeviceReset();
 

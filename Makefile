@@ -132,9 +132,9 @@ cuda_u.o: cuda_u.cu
 #cppIntegration_gold.o: cppIntegration_gold.cpp
 #	$(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
-main.o: main.cpp
+main.o: main.cpp displacement.cpp
 	$(NVCC) $(IPATH) $(LPATH) $(LDLIBS) $(INCLUDES)  $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
-	
+
 cuda_u: cuda_u.o main.o
 	$(NVCC) $(ALL_LDFLAGS) -o $@ $+ $(LDLIBS) $(LIBRARIES)
 	mkdir -p ../../bin/$(OS_ARCH)/$(OSLOWER)/$(TARGET)$(if $(abi),/$(abi))

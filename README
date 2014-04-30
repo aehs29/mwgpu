@@ -9,7 +9,20 @@ OpenGL on CUDA v 1.0
 
 #####################
 
+
+#######################
 CUDA Displacement v 1.1
+
+- Loading values of modified K and M Matrices and fixed_nodes indices
+- Only one function to calculate and render
+- Render using original nodes and not incrementally (WORKS!!!)
+- Zoom stopped working due above
+- Change colors of object
+- Still have to check DrawElements to see if size is correct
+
+
+
+#######################
 
 -- Assume matrices are in row major order
 
@@ -43,6 +56,10 @@ TODO
 -- Check values with matlab
 
 --Check existence of csv files or exit
+
+
+TODO
+-- Add fixedFace to C  Code
 
 
 --Change Rotation method
