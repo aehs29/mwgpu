@@ -37,7 +37,7 @@ include ./findcudalib.mk
 
 # Location of the CUDA Toolkit
 CUDA_PATH ?= "/opt/cuda"
-
+dbg=1
 # internal flags
 NVCCFLAGS   := -m${OS_SIZE}
 CCFLAGS     :=
@@ -53,7 +53,7 @@ EXTRA_CCFLAGS     ?=
 
 IPATH= -I/usr/include
 LPATH= -L/usr/lib
-LDLIBS = -lglut -lGL -lGLU -lm
+LDLIBS = -lglut -lGL -lGLU -lm -lGLEW -g
 
 
 # OS-specific build flags

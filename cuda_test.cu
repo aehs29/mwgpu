@@ -7,14 +7,22 @@
 
 // CUDA runtime
 #include <cuda_runtime.h>
+#include <cuda_gl_interop.h>
+
 
 // helper functions and utilities to work with CUDA
 #include <helper_cuda.h>
 #include <helper_functions.h>
 
+__global__ void kern(int i)
+{
+
+i=i+i;
+}
 
 
-__global__ void kernel(float *g_nodes)
+//__global__ void kernel(float scale)
+__global__ void kernel(float *g_nodes,float scale)
 {
     // write data to global memory
     const unsigned int tid = threadIdx.x;
@@ -33,27 +41,43 @@ __global__ void kernel(float *g_nodes)
 //                  | ((((data << 16) >> 24) - 10) <<  8)
 //                  | ((((data << 24) >> 24) - 10) <<  0);
 
-	g_nodes[tid]=g_nodes[tid]*1.001;
+	g_nodes[tid]=g_nodes[tid]*scale;
+//	scale*scale;
 }
 
+//float *cuda_data=NULL;
+extern "C" void map_texture(void *cuda_dat, size_t siz,cudaGraphicsResource *resource)
+{
+size_t size;
+cudaGraphicsResourceGetMappedPointer((void **)(&cuda_dat), &size, resource);
+}
 
 extern "C" bool
-runTest(const int argc, const char **argv, float *nodes, int node_count)
+runTest(const int argc, const char **argv, float *buffer, int node_count, float scale)
 {
     // use command-line specified CUDA device, otherwise use device with highest Gflops/s
     //findCudaDevice(argc, (const char **)argv);
 
+
+
+	// CUDA
+//cudaSetDevice(0);
+
+//	cudaGLSetGLDevice(0);
+
+
     const unsigned int num_threads = node_count*3;
+//	const unsigned int num_threads = 1;
 //    assert(0 == (len % 4));
     const unsigned int mem_size = sizeof(float) * node_count*3;
 //    const unsigned int mem_size_int2 = sizeof(int2) * len;
 
     // allocate device memory
-    float *d_nodes;
-    checkCudaErrors(cudaMalloc((void **) &d_nodes, mem_size));
+    //float *d_nodes;
+    //checkCudaErrors(cudaMalloc((void **) &d_nodes, mem_size));
     // copy host memory to device
-    checkCudaErrors(cudaMemcpy(d_nodes, nodes, mem_size,
-                               cudaMemcpyHostToDevice));
+    //checkCudaErrors(cudaMemcpy(d_nodes, nodes, mem_size,
+    //                           cudaMemcpyHostToDevice));
     // allocate device memory for int2 version
 //    int2 *d_data_int2;
 //    checkCudaErrors(cudaMalloc((void **) &d_data_int2, mem_size_int2));
@@ -65,10 +89,13 @@ runTest(const int argc, const char **argv, float *nodes, int node_count)
     dim3 grid(1, 1, 1);
     dim3 threads(num_threads, 1, 1);
     //dim3 threads2(len, 1, 1); // more threads needed fir separate int2 version
+	printf("Executing Kernel, Threads: %u, Scale:%f\n",num_threads,scale);
     // execute the kernel
-    kernel<<< grid, threads >>>((float*) d_nodes);
+//    kernel<<< grid, threads >>>(scale);
+    kernel<<< grid, threads >>>(buffer,scale);
     //kernel2<<< grid, threads2 >>>(d_data_int2);
 
+	
     // check if kernel execution generated and error
     getLastCudaError("Kernel execution failed");
 
@@ -79,8 +106,8 @@ runTest(const int argc, const char **argv, float *nodes, int node_count)
 //    computeGold2(reference2, data_int2, len);
 
     // copy results from device to host
-    checkCudaErrors(cudaMemcpy(nodes, d_nodes, mem_size,
-                               cudaMemcpyDeviceToHost));
+   // checkCudaErrors(cudaMemcpy(nodes, d_nodes, mem_size,
+     //                          cudaMemcpyDeviceToHost));
 //    checkCudaErrors(cudaMemcpy(data_int2, d_data_int2, mem_size_int2,
 //                               cudaMemcpyDeviceToHost));
 
@@ -98,10 +125,23 @@ runTest(const int argc, const char **argv, float *nodes, int node_count)
 //    }
 
     // cleanup memory
-    checkCudaErrors(cudaFree(d_nodes));
+//    checkCudaErrors(cudaFree(d_nodes));
 //    checkCudaErrors(cudaFree(d_data_int2));
 //    free(reference);
 //    free(reference2);
 
     return success;
+}
+
+extern "C" bool runTest2(const int argc, const char **argv, int i)
+{
+	cudaSetDevice(0);
+//	cudaGLSetGLDevice(0);
+  dim3 grid(1, 1, 1);
+    dim3 threads(2, 1, 1);
+
+	  kern<<< grid, threads >>>(i);
+    getLastCudaError("Kernel execution failed");
+
+	  std::cout<<i;
 }
