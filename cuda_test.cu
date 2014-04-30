@@ -25,7 +25,9 @@ i=i+i;
 __global__ void kernel(float *g_nodes,float scale)
 {
     // write data to global memory
-    const unsigned int tid = threadIdx.x;
+    const unsigned int TID = threadIdx.x;
+    const unsigned int BID = blockIdx.x;
+	const unsigned int BDIM = blockDim.x;
 //    float nodes = g_nodes[tid];
 
     // use integer arithmetic to process all four bytes with one thread
@@ -41,8 +43,15 @@ __global__ void kernel(float *g_nodes,float scale)
 //                  | ((((data << 16) >> 24) - 10) <<  8)
 //                  | ((((data << 24) >> 24) - 10) <<  0);
 
-	g_nodes[tid]=g_nodes[tid]*scale;
+	g_nodes[BDIM*BID+TID]=g_nodes[BDIM*BID+TID]*scale;
 //	scale*scale;
+}
+__global__ void kernelRemaining(float *g_nodes,float scale, unsigned int threadsDone)
+{
+    // write data to global memory
+    const unsigned int TID = threadIdx.x;
+
+	g_nodes[threadsDone-1+TID]=g_nodes[threadsDone-1+TID]*scale;
 }
 
 //float *cuda_data=NULL;
@@ -64,12 +73,28 @@ runTest(const int argc, const char **argv, float *buffer, int node_count, float 
 //cudaSetDevice(0);
 
 //	cudaGLSetGLDevice(0);
+const unsigned int maxThreadsBlock=512;
+const unsigned int warpSize=32;
+const unsigned int warpsBlock = maxThreadsBlock/warpSize;
+const unsigned int totalThreads = node_count*3;
+const unsigned int warps = totalThreads/warpSize;
+const unsigned int mod = totalThreads%maxThreadsBlock;
+unsigned int blocks = warps/warpsBlock;
+unsigned int threadsDone = maxThreadsBlock*blocks;
 
+unsigned int threadsX;
 
-    const unsigned int num_threads = node_count*3;
+	if (totalThreads>512)
+		threadsX=maxThreadsBlock;
+	else{
+		threadsX=totalThreads;
+		blocks=1;
+	}
+
+    //const unsigned int num_threads = (node_count*3);
 //	const unsigned int num_threads = 1;
 //    assert(0 == (len % 4));
-    const unsigned int mem_size = sizeof(float) * node_count*3;
+    const unsigned int mem_size = sizeof(float) * totalThreads;
 //    const unsigned int mem_size_int2 = sizeof(int2) * len;
 
     // allocate device memory
@@ -85,14 +110,25 @@ runTest(const int argc, const char **argv, float *buffer, int node_count, float 
  //   checkCudaErrors(cudaMemcpy(d_data_int2, data_int2, mem_size_int2,
   //                             cudaMemcpyHostToDevice));
 
+	//const int y=num_threads%512;
+
     // setup execution parameters
-    dim3 grid(1, 1, 1);
-    dim3 threads(num_threads, 1, 1);
+    dim3 grid(blocks, 1, 1);
+    dim3 threads(threadsX, 1, 1);
     //dim3 threads2(len, 1, 1); // more threads needed fir separate int2 version
 //	printf("Executing Kernel, Threads: %u, Scale:%f\n",num_threads,scale);
     // execute the kernel
 //    kernel<<< grid, threads >>>(scale);
+
+/*
+printf("Blocks:%u\n",blocks);
+printf("ThreadsOnK:%u\n",threadsX);
+printf("Remaining:%u\n",mod);
+printf("threadsDone:%u\n", threadsDone);
+*/
     kernel<<< grid, threads >>>(buffer,scale);
+if(totalThreads>512)
+	kernelRemaining<<< 1,mod >>>(buffer,scale, threadsDone);
     //kernel2<<< grid, threads2 >>>(d_data_int2);
 
 	

@@ -1,3 +1,8 @@
-###
-Testing basic CUDA kernels on OpenGL rendering
-###
+#####################
+OpenGL on CUDA v 1.0
+
+- Zoom is performed by scaling node locations by some factor
+- OpenGL is using a VBO
+- Calculations are done on the GPU
+- CUDA calculations are applied directly to the VBO avoiding memory transfer
+- Thread/Block/Grid are computed "optimally" 
