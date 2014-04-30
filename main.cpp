@@ -41,6 +41,9 @@ float deltaAngleX = 0.0f;
 int yOrigin=-1;
 
 
+	bool bTestResult;
+extern "C" bool runTest(const int argc, const char **argv, float *nodes, int node_count);
+
 void changeSize(int w, int h) {
 
 	// Prevent a divide by zero, when window is too short
@@ -67,6 +70,9 @@ void changeSize(int w, int h) {
 
 
 void renderScene(void) {
+
+    bTestResult = runTest(0, (const char **)"", nodes, node_count);
+
 
 	angle+=deltaAngle;
 	angleX+=deltaAngleX;
@@ -272,7 +278,7 @@ void mouseButton(int button, int state, int x, int y) {
 
 
 
-extern "C" bool runTest(const int argc, const char **argv, float *nodes, int node_count);
+
 
 int main(int argc, char **argv)
 {
@@ -503,7 +509,7 @@ string line;
 					{
 						if(val_count>0)
 						{
-							elem[elem_nodes*(line_count-1)+(val_count-1)]=converted;
+							elem[elem_nodes*(line_count-1)+(val_count-1)]=converted-1;
 							// elem[line_count-1][val_count-1]=converted; 
 							//cout<<elem[line_count-1][val_count-1]<<",";
 						// use converted
@@ -518,8 +524,6 @@ string line;
 		line_count++;
 	}
 
-
-	bool bTestResult;
 	
 
     // run the device part of the program
@@ -536,11 +540,13 @@ string line;
 	cout<<"Nodes per Element: "<<elem_nodes<<"\n";
 
 
-	cudaDeviceReset();
-
+	
 
 
 	glutMainLoop();
+
+	cudaDeviceReset();
+
 
 	return 1;
     //exit(bTestResult ? EXIT_SUCCESS : EXIT_FAILURE);

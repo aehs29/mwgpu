@@ -33,7 +33,7 @@ __global__ void kernel(float *g_nodes)
 //                  | ((((data << 16) >> 24) - 10) <<  8)
 //                  | ((((data << 24) >> 24) - 10) <<  0);
 
-	g_nodes[tid]=g_nodes[tid]*1.2;
+	g_nodes[tid]=g_nodes[tid]*1.001;
 }
 
 
@@ -41,7 +41,7 @@ extern "C" bool
 runTest(const int argc, const char **argv, float *nodes, int node_count)
 {
     // use command-line specified CUDA device, otherwise use device with highest Gflops/s
-    findCudaDevice(argc, (const char **)argv);
+    //findCudaDevice(argc, (const char **)argv);
 
     const unsigned int num_threads = node_count*3;
 //    assert(0 == (len % 4));
