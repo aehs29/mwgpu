@@ -154,7 +154,7 @@ if (Height == 0)
 	CurrentWidth = Width;
 	CurrentHeight = Height;
 	glViewport(0, 0, CurrentWidth, CurrentHeight);
-	gluPerspective(45.0f, ratio, 0.1f, 100.0f);
+//	gluPerspective(45.0f, ratio, 0.1f, 100.0f); // ULTRA DANGER
 	glMatrixMode(GL_MODELVIEW);
 }
 
@@ -181,19 +181,39 @@ void RenderFunction(void)
  
 //Create CUDA stream
 //cudaStreamCreate(&cuda_stream);
- 
+
+//let's have a look at the buffer
+    // glBindBuffer(GL_ARRAY_BUFFER, BufferId);
+    // float* mappedBuffer = (float *) glMapBuffer(GL_ARRAY_BUFFER,GL_READ_ONLY);
+    // printf("\tAfter Kernel Execution:\n");
+	// 	   for(int h=0;h<node_count*node_dimensions;h++){
+	// 		   printf("Index: %d, Value: %f\n",h,mappedBuffer[h]);
+	// 	   }
+    // glUnmapBuffer(GL_ARRAY_BUFFER);
+    // glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+   
+
+
 //Map the graphics resource to the CUDA stream
-if (cudaGraphicsMapResources(1, resources,0) != cudaSuccess)
+
+	if (cudaGraphicsMapResources(1, resources,0) != cudaSuccess)
         printf("Resource mapping failed...\n");
-if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &siz, *resources) !=cudaSuccess)
+	if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &siz, *resources) !=cudaSuccess)
 	    printf("Resource pointer mapping failed...\n");
+
 
 
 
 bTestResult = runTest(0, (const char **)"", cuda_dat, node_count,scale);
 scale=1.0;
+
+
+
 //cudaGLUnmapBufferObject(&ptr,BufferId);
 cudaGraphicsUnmapResources(1, resources);
+ 
+
  
 //Destroy the CUDA stream
 //cudaStreamDestroy(cuda_stream);
@@ -216,8 +236,13 @@ cudaGraphicsUnmapResources(1, resources);
 
 	//glDrawElements(GL_TRIANGLES, 48, GL_UNSIGNED_BYTE, NULL);
 
+
+
+
+
 glColor3f(1.0f,1.0f,0.0f);
 glDrawElements(GL_QUAD_STRIP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
+
  glColor3f(1.0f,1.0f,1.0f);
 glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
 
@@ -465,7 +490,7 @@ GLenum ErrorCheckValue = glGetError();
 	
 	glGenBuffers(1, &BufferId);
 	glBindBuffer(GL_ARRAY_BUFFER, BufferId);
-	glBufferData(GL_ARRAY_BUFFER, BufferSize, nodes, GL_DYNAMIC_COPY);
+	glBufferData(GL_ARRAY_BUFFER, BufferSize, nodes, GL_DYNAMIC_DRAW);
 
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
 //	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, VertexSize, (GLvoid*)RgbOffset);
@@ -482,11 +507,16 @@ cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
 
 
 
-// let's have a look at the buffer
+
+
+
+//let's have a look at the buffer
     // glBindBuffer(GL_ARRAY_BUFFER, BufferId);
-    // int* mappedBuffer = (int *) glMapBuffer(GL_ARRAY_BUFFER,GL_READ_ONLY);
-    // printf("\tbefore mapping: %d, %d, %d\n",mappedBuffer[0], mappedBuffer[1], 
-    //         mappedBuffer[2]);
+    // float* mappedBuffer = (float *) glMapBuffer(GL_ARRAY_BUFFER,GL_READ_ONLY);
+    // printf("\tbefore mapping:\n");
+	// 	   for(int h=0;h<node_count*node_dimensions;h++){
+	// 		   printf("Index: %d, Value: %f\n",h,mappedBuffer[h]);
+	// 	   }
     // glUnmapBuffer(GL_ARRAY_BUFFER);
     // glBindBuffer(GL_ARRAY_BUFFER, 0);
 

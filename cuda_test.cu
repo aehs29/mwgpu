@@ -89,7 +89,7 @@ runTest(const int argc, const char **argv, float *buffer, int node_count, float 
     dim3 grid(1, 1, 1);
     dim3 threads(num_threads, 1, 1);
     //dim3 threads2(len, 1, 1); // more threads needed fir separate int2 version
-	printf("Executing Kernel, Threads: %u, Scale:%f\n",num_threads,scale);
+//	printf("Executing Kernel, Threads: %u, Scale:%f\n",num_threads,scale);
     // execute the kernel
 //    kernel<<< grid, threads >>>(scale);
     kernel<<< grid, threads >>>(buffer,scale);
