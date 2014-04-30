@@ -6,3 +6,44 @@ OpenGL on CUDA v 1.0
 - Calculations are done on the GPU
 - CUDA calculations are applied directly to the VBO avoiding memory transfer
 - Thread/Block/Grid are computed "optimally" 
+
+#####################
+
+CUDA Displacement v 1.1
+
+-- Assume matrices are in row major order
+
+TODO
+- Load values from csv files (eigen)
+- Allocate
+- Perform U calculation using CUDA matrixMult, vectorAdd and VectorbyScalar kernels
+- Keep showing on OpenGL using VBO's
+- Should potentially show the object moving in one direction
+
+
+
+--Loaded and allocated Eigenvectors and Eigenvalues -- Test with real csv files
+--Check MATLAB for Mass matrix, is it needed? no, just multiply force vector by a big factor
+
+-Create indices as MATRICES and not vectors as originally intended, to use matrixMult Kernel
+- Load indices matrices to test results
+
+
+--Potentially create a kernel to calculate equation 19 NOPE
+
+-- Add transpose kernel to displacement....DONE
+-- Add vectorAdd kernel to displacement....DONE
+-- Create MatrixbyVector kernel............DONE
+-- make a copy array on gpu................DONE
+
+-- Call kernels to get equation 19.........DONE
+
+
+-- Change vectorAdd kernel.................DONE
+-- Check values with matlab
+
+--Check existence of csv files or exit
+
+
+--Change Rotation method
+

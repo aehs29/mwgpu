@@ -124,9 +124,9 @@ GENCODE_FLAGS   := $(GENCODE_SM10) $(GENCODE_SM20) $(GENCODE_SM30)
 # Target rules
 all: build
 
-build: cuda_test
+build: cuda_u
 
-cuda_test.o: cuda_test.cu
+cuda_u.o: cuda_u.cu
 	$(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
 #cppIntegration_gold.o: cppIntegration_gold.cpp
@@ -135,16 +135,16 @@ cuda_test.o: cuda_test.cu
 main.o: main.cpp
 	$(NVCC) $(IPATH) $(LPATH) $(LDLIBS) $(INCLUDES)  $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 	
-cuda_test: cuda_test.o main.o
+cuda_u: cuda_u.o main.o
 	$(NVCC) $(ALL_LDFLAGS) -o $@ $+ $(LDLIBS) $(LIBRARIES)
 	mkdir -p ../../bin/$(OS_ARCH)/$(OSLOWER)/$(TARGET)$(if $(abi),/$(abi))
 	cp $@ ../../bin/$(OS_ARCH)/$(OSLOWER)/$(TARGET)$(if $(abi),/$(abi))
 
 run: build
-	./cuda_test
+	./cuda_u
 
 clean:
-	rm -f cuda_test cuda_test.o main.o *.bin
+	rm -f cuda_u cuda_u.o main.o *.bin
 #	rm -rf ../../bin/$(OS_ARCH)/$(OSLOWER)/$(TARGET)$(if $(abi),/$(abi))/cppIntegration
 
 clobber: clean

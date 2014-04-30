@@ -8,25 +8,22 @@
 #include <fstream>
 #include <string.h>
 #include <sstream>
-#include <time.h>       /* time */
+#include <time.h>
 
+
+// OpenGl Includes
 #include <GL/glew.h>
 #include <GL/glut.h>
 #include <GL/freeglut.h>
-//#define GL_GLEXT_PROTOTYPES
-
-
-// Buffer stuff
-//#include <GL/glew.h>  
-
-//#include "glInfo.h" 
-//#include "glext.h" 
-
 
 /* CUDA Includes */
 #include <cuda_runtime.h>
 #include <vector_types.h>
 #include <cuda_gl_interop.h>
+
+
+
+#include "displacement.cpp"
 
 using namespace std;
 
@@ -34,9 +31,21 @@ using namespace std;
 
 float *nodes;
 GLshort *elem;
+float *eigenVals;
+float *eigenVecs;
+
+
+// Declare Coefficients 
+// Square matrices dimensions: #eigenvals
+float *d,*alpha, *alphaI,*beta,*gama,*M,*C;
+float *F, *Fo, *q, *qo, *qd, *qdo, *u, *R, *Ro;
+float h;
+
+
 
 int elem_count, elem_nodes;
 int node_count, node_dimensions;
+int eigencount;
 
 
 float red=1.0f, blue=0.0f, green=0.0f;
@@ -53,11 +62,14 @@ int yOrigin=-1;
 float scale=1.0;
 cudaGraphicsResource *resources[1];
 
-extern "C" bool runTest2(const int argc, const char **argv, int i);
+//extern "C" bool MatrixMult (float *h_A, float *h_B, float *h_C , int RowsA, int ColsA, int RowsB, int ColsB, const int block_size);
+
+//extern "C" bool runTest2(const int argc, const char **argv, int i);
 	bool bTestResult;
-extern "C" bool runTest(const int argc, const char **argv, float * buffer, int node_count, float scale);
+extern "C" bool runTest(const int argc, const char **argv, float * buffer, float *u,  int node_count, float scale);
 extern "C" void map_texture(void *cuda_data, size_t size,cudaGraphicsResource *resource);
 
+extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size);
 
 void DestroyShaders(void);
 void DestroyVBO(void);
@@ -195,6 +207,36 @@ void RenderFunction(void)
    
 
 
+	// Get displacement
+
+/* Parallel Code*/
+
+/*
+	const int block_size=16;
+	bool disp ;
+	disp = displacement (q, qo, qd, qdo, F, Fo, Ro, alpha, alphaI, beta, gama, eigenVecs, h, u, eigencount, node_count, node_dimensions, block_size);
+*/
+
+/*Serial Code*/
+
+	displacement_serial();
+
+
+
+
+
+	// Copy Old values
+	std::copy(qd,qd+eigencount,qdo);
+	std::copy(q,q+eigencount,qo);
+//	std::copy(R,R+tot_rowCount,Ro);
+	std::copy(F,F+(node_count*node_dimensions),Fo);
+
+
+
+
+
+
+
 //Map the graphics resource to the CUDA stream
 
 	if (cudaGraphicsMapResources(1, resources,0) != cudaSuccess)
@@ -204,8 +246,8 @@ void RenderFunction(void)
 
 
 
-
-bTestResult = runTest(0, (const char **)"", cuda_dat, node_count,scale);
+	// TODO add u (displaement)
+	bTestResult = runTest(0, (const char **)"", cuda_dat, u, node_count,scale);
 scale=1.0;
 
 
@@ -828,6 +870,7 @@ void mouseButton(int button, int state, int x, int y) {
 int main(int argc, char **argv)
 {
 
+/*#########---------OpenGL Init------------#########*/
 
 
 	// init GLUT and create window
@@ -888,6 +931,11 @@ int main(int argc, char **argv)
 	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
 
+/*#########---------Ends OpenGL Init------------#########*/
+
+
+
+/*#########---------Starts Getopts code------------#########*/
 
 
 // Extern because vars declared into getopts
@@ -895,10 +943,9 @@ int main(int argc, char **argv)
 	extern int optind;
 	int c, err = 0; 
 	int nflag=0, kflag=0;
-	string ename,nname,kname;
+	string ename,nname,kname,eigenvec_name;
 	static char usage[] = "usage: %s -n Node_filename [-k eigen_filename] \n";
 
-	// Getopts
 	while ((c = getopt(argc, argv, "n:k:")) != -1)
 		switch (c) {
 		case 'n':
@@ -908,12 +955,16 @@ int main(int argc, char **argv)
 			nname.append(".node");
 			ename.append(optarg);
 			ename.append(".ele");
+			kname.append(optarg);
+			kname.append(".csv");
+			eigenvec_name.append(optarg);
+			eigenvec_name.append("vec.csv");
 			break;
 		case 'k':
 			kflag = 1;
 			// Convert to string & append extension
 			kname.append(optarg);
-			kname.append(".mat");
+			kname.append(".csv");
 			break;
 		case '?':
 			err = 1;
@@ -927,8 +978,9 @@ int main(int argc, char **argv)
 	} 
 	else if (kflag==0)
 	  {
-		kname=nname;
-		kname.append(".mat");
+		  // TODO fix nmname to get rid of extension
+		  //	kname=nname;
+//		kname.append(".csv");
 	  }
 	else if ((optind+1-1) > argc) 
 	{	
@@ -947,8 +999,13 @@ int main(int argc, char **argv)
 	/* Print Values */
 	cout<<"NodeFile:"<<nname<<"\n";
 	cout<<"ElemFile:"<<ename<<"\n";
+
 	// Test Printf on C++ string
     printf("EigenFile:%s\n", kname.c_str());
+
+	cout<<"EigenVecsFile:"<<eigenvec_name<<"\n";
+
+
 	
 	if (optind < argc)
 	{	/* Last arguments */
@@ -959,6 +1016,13 @@ int main(int argc, char **argv)
 	}
 
 /* End of Getopts  */
+
+/*#########---------End of Getopts------------#########*/
+
+
+
+/*#########---------File Loading------------#########*/
+
 
 /* Open Files  */
 
@@ -1118,6 +1182,249 @@ string line;
 		line_count++;
 	}
 
+	// EigenFile
+
+	// No need for columns in EIGENVALUES
+// Getfile handle
+	std::ifstream csv_file_rows(kname.c_str());
+	std::ifstream csv_file(kname.c_str());
+	unsigned int row_count=0;
+	unsigned int tot_rowCount;
+	//std::string line;	
+
+// Read whole file to get row and count
+	 while (std::getline(csv_file_rows,line)){
+	// 	if(row_count==1){
+	// 		std::stringstream lineStream(line);
+	// 		std::string colVal;
+	// 		while(std::getline(lineStream,colVal,',')){
+	// 			col_count++;
+	// 		}
+	// 	}
+
+		row_count++;
+		//	std::cout<<line<<"\t";
+//		std::cout<<row_count<<"\n";
+	}
+
+
+	// Print debug values
+	tot_rowCount=row_count;
+//	tot_colCount=col_count;
+
+	// std::cout<<tot_colCount<<"\n";
+
+	// Allocate arrays
+	eigenVals=new float[tot_rowCount];
+	// eigenVals=new float[tot_rowCount*tot_colCount];
+
+	row_count=0;				// reset value
+
+	// Read file to initialize array
+	while (std::getline(csv_file,line)){
+    // Get rid of carriage return
+		if(line[line.length()-1]=='\r')
+			line[line.length()-1]='\0';
+		std::stringstream lineStream(line);
+		std::string colVal;
+		
+		// Reset col value
+		//col_count=0;
+
+		// Separate values by ','
+		while(std::getline(lineStream,colVal,',')){
+			if(colVal.length()>0){ // Could assert also
+				// Convert char* to float
+				char *p;
+				float converted = strtof(colVal.c_str(),&p);
+				if (*p){}
+				else{
+					eigenVals[row_count]=converted;
+					//std::cout<<eigenVals[row_count]<<"\n";
+					// eigenVals[(tot_colCount*row_count)+col_count]=converted;
+					// Print it to check if its correct
+					// std::cout<<(tot_colCount*row_count)+col_count<<"\t"<<converted<<"\n";
+					// std::cout<<eigenVals[(tot_colCount*row_count)+col_count]<<"\t"<<converted<<"\n";
+				}
+			}
+			//	col_count++;
+		}
+		row_count++;
+	}
+
+// EigenVectorsFile
+// Getfile handle
+
+	std::ifstream eigenvec_file_rows(eigenvec_name.c_str());
+	std::ifstream eigenvec_file(eigenvec_name.c_str());
+
+	// Columns should be same as eigenVals count
+	// Rows should be the same as nodes x dimensions
+	unsigned int col_countEvec=0;
+	unsigned int tot_colCountEvec;
+
+	//std::string line;	
+
+// Read whole file to get row and count
+	// while (std::getline(eigenvec_file_rows,line)){
+	// 	if(col_countEvec==0){
+	// 		std::stringstream lineStream(line);
+	// 		std::string colVal;
+	// 		while(std::getline(lineStream,colVal,',')){
+	// 			col_countEvec++;
+	// 		}
+	// 	}
+	// }
+	
+// Print debug values
+	// Columns same as EigenVals count
+	tot_colCountEvec=tot_rowCount;
+
+
+
+	// Allocate arrays
+	eigenVecs=new float[node_count*node_dimensions*tot_colCountEvec];
+
+	row_count=0;				// reset value
+
+	// Read file to initialize array
+	while (std::getline(eigenvec_file,line)){
+    // Get rid of carriage return
+		if(line[line.length()-1]=='\r')
+			line[line.length()-1]='\0';
+		std::stringstream lineStream(line);
+		std::string colVal;
+		
+		// Reset col value
+		col_countEvec=0;
+
+		// Separate values by ','
+		while(std::getline(lineStream,colVal,',')){
+			if(colVal.length()>0){ // Could assert also
+				// Convert char* to float
+				char *p;
+				float converted = strtof(colVal.c_str(),&p);
+				if (*p){}
+				else{
+					eigenVecs[(tot_colCountEvec*row_count)+col_countEvec]=converted;
+					// Print it to check if its correct
+					//std::cout<<eigenVecs[(node_count*node_dimensions*row_count)+col_countEvec]<<",";
+					//std::cout<<eigenVals[(tot_colCountEvec*row_count)+col_countEvec]<<"\n";
+					//std::cout<<(tot_colCountEvec*row_count)+col_countEvec<<"\n";
+				}
+			}
+			col_countEvec++;
+		}
+		row_count++;
+	}
+
+
+
+/*#########---------Ends File Loading---------------#########*/
+
+
+
+/*#########---------Allocate coefficient matrices---------------#########*/
+
+	// D, alpha, beta, gamma square matrices eigencount x eigencount
+
+	// Declare h
+	h=0.03;
+
+	d = new float[tot_rowCount*tot_rowCount];
+	alpha = new float[tot_rowCount*tot_rowCount];
+	beta = new float[tot_rowCount*tot_rowCount];
+	gama = new float[tot_rowCount*tot_rowCount];
+	M =  new float[tot_rowCount*tot_rowCount];
+	// C can be a vector constants: M*0.01+K*0.001
+	C =  new float[tot_rowCount];
+
+	// Create alpha-identity
+	alphaI = new float[tot_rowCount*tot_rowCount];
+
+
+	// 2 nested fors to declare square diagonal matrices
+	for(int i=0;i<tot_rowCount;i++){
+		// Maybe only need 1 for ?
+		for(int j=0;j<tot_rowCount;j++){
+			int index=i*tot_rowCount+j;
+			// Only declare diagonal elements
+			if(i==j){
+				M[index]=1;
+				C[i]=0.01+0.001*eigenVals[i];
+				d[index]=1+h*C[i]+eigenVals[i]*h*h;
+				alpha[index]=1-((h*h)*eigenVals[i]/d[index]);
+				beta[index]=h*(1-(h*C[i]+(h*h)*eigenVals[i])/d[index]);
+				gama[index]=h*h/d[index];
+				alphaI[index]=alpha[index]-1;
+			}
+			else{
+				M[index]=0;
+				d[index]=0;
+				alpha[index]=0;
+				beta[index]=0;
+				gama[index]=0;
+				alphaI[index]=0;
+			}
+			//std::cout<<gama[i*tot_rowCount+j]<<",";
+		}
+	}
+
+
+/*#########---------Ends Coefficients allocation---------------#########*/
+
+
+
+
+
+/*#########---------Allocate calculation vectors---------------#########*/
+
+
+// Allocate vectors
+// F and u node dimensioned all others EigenVals dimensioned
+	F = new float[node_count*node_dimensions];
+	Fo = new float[node_count*node_dimensions];
+	q = new float[tot_rowCount];
+	qo = new float[tot_rowCount];
+	qd = new float[tot_rowCount];
+	qdo = new float[tot_rowCount];
+	u = new float[node_count*node_dimensions];
+	R = new float[node_count*node_dimensions*node_count*node_dimensions];
+	Ro = new float[node_count*node_dimensions*node_count*node_dimensions];
+
+
+
+	// Some force constant
+	const float force=0.00002;
+	// Delcare F in only 1 direction
+	for (int i=0;i<node_count*node_dimensions;i++){
+		if(3-(i%3)==2)
+			F[i]=force;
+		else
+			F[i]=0;
+			// F[i]=force;
+		u[i]=0;
+		//	std::cout<<F[i]<<",";
+	}
+
+	// Copy F to Fo
+	std::copy(F,F+(node_count*node_dimensions),Fo);
+
+	// For loop to initialize all other vectors (all 0's)
+	for (int i=0;i<tot_rowCount;i++){
+		q[i]=0;
+		qo[i]=0;
+		qd[i]=0;
+		qdo[i]=0;
+	}
+
+
+
+
+/*#########---------Ends calculation vectors allocation---------------#########*/
+
+
+
 
 	CreateVBO_CUDA();
 //	CreateShaders();
@@ -1133,10 +1440,14 @@ string line;
 	}
 */
 
-	cout<<"Nodes: "<<node_count<<"\n";
+	eigencount=tot_rowCount;
+
+	cout<<"Nodes: "<<node_count<<"\t";
 	cout<<"Dimensions: "<<node_dimensions<<"\n";
-	cout<<"Elements: "<<elem_count<<"\n";
+	cout<<"Elements: "<<elem_count<<"\t";
 	cout<<"Nodes per Element: "<<elem_nodes<<"\n";
+	std::cout<<"# Eigenvalues: "<<tot_rowCount<<"\n";
+	std::cout<<"Eigenvectors matrix dimensions:"<<node_count*node_dimensions<<"x"<<tot_rowCount<<"\n";
 
 //	int abc=1;
 //	bool a = runTest2(0, (const char **)"", abc);
@@ -1148,8 +1459,35 @@ string line;
 	cudaDeviceReset();
 
 
+
+/*#########---------Free Memory---------------#########*/
+
+
+	free(nodes);
+	free(elem);
+	free(eigenVals);
+	free(eigenVecs);
+	free(d);
+	free(alpha);
+	free(alphaI);
+	free(beta);
+	free(gama);
+	free(M);
+	free(C);
+	free(F);
+	free(Fo);
+	free(q);
+	free(qo);
+	free(qd);
+	free(qdo);
+	free(u);
+
+
+
+/*#########---------Free Memory---------------#########*/
+
+
 	return 1;
     //exit(bTestResult ? EXIT_SUCCESS : EXIT_FAILURE);
 
 }
-
