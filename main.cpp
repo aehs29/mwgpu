@@ -22,6 +22,11 @@
 #include <cuda_gl_interop.h>
 
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include "shader_utils.h"
+
 
 #include "displacement.cpp"
 
@@ -66,6 +71,20 @@ float deltaAngleX = 0.0f;
 int yOrigin=-1;
 
 float scale=1.0;
+float zoom=-5.0;
+
+float posX=0.0, posY =0.0;
+float DposX=0.0,DposY=0.0;
+float DesposX=0.0, DesposY=0.0;
+int buttonn=0;
+
+GLuint program;
+
+GLint uniform_mvp;
+GLint attribute_coord3d, attribute_v_color;
+
+
+
 cudaGraphicsResource *resources[1];
 //cudaGraphicsResource *original_nodes[1];
 
@@ -77,7 +96,7 @@ cudaGraphicsResource *resources[1];
 extern "C" bool runTest(const int argc, const char **argv, float * buffer, float *u,  int node_count, float scale);
 extern "C" void map_texture(void *cuda_data, size_t size,cudaGraphicsResource *resource);
 
-extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float *buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float scale);
+extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float *buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float *d_nodes);
 
 extern "C" void* allocate_GPUnodes(float *d_nodes, float *nodes, unsigned int node_count, unsigned int node_dimensions);
 extern "C" bool free_GPUnodes(float *d_nodes);
@@ -110,11 +129,12 @@ const GLchar* VertexShader =
 
 	"layout(location=0) in vec3 in_Position;\n"\
 	"layout(location=0) in vec3 in_Color;\n"\
+	"uniform mat4 mvp;\n"\
 	"out vec4 ex_Color;\n"\
 
 	"void main(void)\n"\
 	"{\n"\
-	"	gl_Position = vec4(in_Position,1.0);\n"\
+	"	gl_Position = mvp*vec4(in_Position,1.0);\n"\
 	"	ex_Color = vec4(in_Color,1.0);\n"\
 	"}\n"
 };
@@ -136,40 +156,6 @@ const GLchar* FragmentShader =
 size_t siz;
 float *cuda_dat = NULL;
 
-
-/*
-void changeSize(int w, int h) {
-
-	// Prevent a divide by zero, when window is too short
-	// (you cant make a window of zero width).
-	if (h == 0)
-		h = 1;
-	float ratio =  w * 1.0 / h;
-
-        // Use the Projection Matrix
-	glMatrixMode(GL_PROJECTION);
-
-        // Reset Matrix
-	glLoadIdentity();
-
-	// Set the viewport to be the entire window
-	glViewport(0, 0, w, h);
-
-	// Set the correct perspective.
-	gluPerspective(45.0f, ratio, 0.1f, 100.0f);
-
-	// Get Back to the Modelview
-	glMatrixMode(GL_MODELVIEW);
-
-	// Draw on cuda?
-	glEnable(GL_DEPTH_TEST);
-
-
-}
-
-*/
-
-
 void ResizeFunction(int Width, int Height)
 {
 if (Height == 0)
@@ -186,6 +172,31 @@ if (Height == 0)
 
 void IdleFunction(void)
 {
+	posX+=DposX;
+	posY+=DposY;
+	angle+=deltaAngle;
+	angleX+=deltaAngleX;
+	// float angle = glutGet(GLUT_ELAPSED_TIME) / 1000.0 * 45;  // 45° per second
+	glm::vec3 axis_y(0, 1, 0);
+	glm::vec3 axis_x(1, 0, 0);
+	glm::mat4 anim = glm::rotate(glm::mat4(1.0f), angle, axis_y);
+	glm::mat4 animy = glm::rotate(glm::mat4(1.0f), angleX, axis_x);
+
+	// Push the cube so its not close to the camera
+	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, zoom));
+
+//	glm::mat4 modelcenter = glm::translate(glm::mat4(1.0f), glm::vec3(0.4, 10.0, 0.0));
+
+	// Lookat(eye,center,up) = position of cam, camera pointed to, top of the camera (tilted)
+	glm::mat4 view = glm::lookAt(glm::vec3(0.0, 0.0, 0.0), glm::vec3(posX, posY, -5.0), glm::vec3(0.0, 1.0, 0.0));
+	// Perspective
+	glm::mat4 projection = glm::perspective(45.0f, 1.0f*CurrentWidth/CurrentHeight, 0.1f, 100.0f);
+
+	glm::mat4 mvp = projection * view * model * anim * animy;
+
+	glUseProgram(program);
+	glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
+
 	glutPostRedisplay();
 }
 
@@ -200,33 +211,6 @@ void RenderFunction(void)
 	
 	//Modify();
 
-//void * ptr;
-//cudaGLMapBufferObject(&ptr,BufferId);
-
-//cudaStream_t cuda_stream;
- 
-//Create CUDA stream
-//cudaStreamCreate(&cuda_stream);
-
-//let's have a look at the buffer
-    // glBindBuffer(GL_ARRAY_BUFFER, BufferId);
-    // float* mappedBuffer = (float *) glMapBuffer(GL_ARRAY_BUFFER,GL_READ_ONLY);
-    // printf("\tAfter Kernel Execution:\n");
-	// 	   for(int h=0;h<node_count*node_dimensions;h++){
-	// 		   printf("Index: %d, Value: %f\n",h,mappedBuffer[h]);
-	// 	   }
-    // glUnmapBuffer(GL_ARRAY_BUFFER);
-    // glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-   
-
-
-
-
-
-
-
-
 
 
 //Map the graphics resource to the CUDA stream
@@ -234,11 +218,11 @@ void RenderFunction(void)
 	if (cudaGraphicsMapResources(1, resources,0) != cudaSuccess)
         printf("Resource mapping failed...\n");
 	// if (cudaGraphicsMapResources(1, original_nodes,0) != cudaSuccess)
-    //     printf("Resource mapping failed...\n");
+    //      printf("Resource mapping failed...\n");
 	if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &siz, *resources) !=cudaSuccess)
 	    printf("Resource pointer mapping failed...\n");
-	// if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat_original, &siz, *original_nodes) !=cudaSuccess)
-	//     printf("Resource pointer mapping failed...\n");
+	 // if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat_original, &siz, *original_nodes) !=cudaSuccess)
+	 //     printf("Resource pointer mapping failed...\n");
 
 
 
@@ -252,7 +236,7 @@ void RenderFunction(void)
 //	long * uAdd;
 
 	if(render==true){
-		disp = displacement (q, qo, qd, qdo, F, Fo, Ro, alpha, alphaI, beta, gama, eigenVecs, h, u, eigencount, node_count, node_dimensions, block_size, cuda_dat, nodes, fixed_nodes, fixed_nodes_count, scale);
+		disp = displacement (q, qo, qd, qdo, F, Fo, Ro, alpha, alphaI, beta, gama, eigenVecs, h, u, eigencount, node_count, node_dimensions, block_size, cuda_dat, nodes, fixed_nodes, fixed_nodes_count, d_nodes);
 
 //	free(u);
 //	u = new float[node_count*node_dimensions];
@@ -294,10 +278,10 @@ cudaGraphicsUnmapResources(1, resources);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 
-	glLoadIdentity();
+//	glLoadIdentity();
 
-	glRotatef(angle, 0.0f, 1.0f, 0.0f);
-	glRotatef(angleX, 1.0f, 0.0f, 0.0f);
+	//glRotatef(angle, 0.0f, 1.0f, 0.0f);
+	//glRotatef(angleX, 1.0f, 0.0f, 0.0f);
 
 /*	if (ActiveIndexBuffer == 0) {
 		glDrawElements(GL_TRIANGLES, 48, GL_UNSIGNED_BYTE, NULL);
@@ -317,7 +301,7 @@ glColor3f(red,green,blue);
 glDrawElements(GL_TRIANGLE_STRIP, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
 //glDrawElements(GL_TRIANGLE_STRIP, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
 
- glColor3f(1.0f,1.0f,1.0f);
+glColor3f(1.0f,1.0f,1.0f);
 //glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
 glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
 //glDrawElements(GL_LINES, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
@@ -332,219 +316,6 @@ void Cleanup(void)
 	DestroyVBO();
 }
 
-/*
-
-void renderScene(void) {
-
-GLuint vertexArray;
-glGenBuffers( 1,&vertexArray);
-glBindBuffer( GL_ARRAY_BUFFER, vertexArray);
-glBufferData( GL_ARRAY_BUFFER, sizeof(nodes), NULL,GL_DYNAMIC_COPY );
-cudaGLRegisterBufferObject( vertexArray );
-
-
-void * vertexPointer;
-// Map the buffer to CUDA
-cudaGLMapBufferObject(&vertexPointer, vertexArray);
-// Run a kernel to create/manipulate the data
-//MakeVerticiesKernel<<<gridSz,blockSz>>>(ptr,numVerticies);
-bTestResult = runTest(0, (const char **)"", nodes, node_count);
-// Unmap the buffer
-//cudaGLUnmapBufferObject(vertexArray);
-cudaGLUnmapBufferObject(vertexArray);
-
-
-
-// Bind the Buffer
-glBindBuffer( GL_ARRAY_BUFFER, vertexArray );
-// Enable Vertex and Color arrays
-glEnableClientState( GL_VERTEX_ARRAY );
-//glEnableClientState( GL_COLOR_ARRAY );
-// Set the pointers to the vertices and colors
-glVertexPointer(3,GL_FLOAT,sizeof(nodes)/node_count,0);
-//glColorPointer(4,GL_UNSIGNED_BYTE,16,12);
-
-
-glColor3f(red,green,blue);
-glDrawElements(GL_QUADS, elem_count*elem_nodes, GL_UNSIGNED_SHORT,elem);
-
-
-//    bTestResult = runTest(0, (const char **)"", nodes, node_count);
-
-
-
-
-
-/*
-
-		GLuint bufferID;
-// Generate a buffer ID
-	glGenBuffers(1,&bufferID);
-// Make this the current UNPACK buffer (OpenGL is state-based)
-	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, bufferID);
-// Allocate data for the buffer
-	glBufferData(GL_PIXEL_UNPACK_BUFFER, 640 * 480 * 4,
-				 NULL, GL_DYNAMIC_COPY);
-
-	cudaGLRegisterBufferObject( bufferID );
-
-
-
-
-	GLuint textureID;
-// Enable Texturing
-	glEnable(GL_TEXTURE_2D);
-// Generate a texture ID
-	glGenTextures(1,&textureID);
-// Make this the current texture (remember that GL is state-based)
-	glBindTexture( GL_TEXTURE_2D, textureID);
-// Allocate the texture memory. The last parameter is NULL since we only
-// want to allocate memory, not initialize it
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, 640, 480, 0, GL_BGRA,
-				  GL_UNSIGNED_BYTE, NULL);
-// Must set the filter mode, GL_LINEAR enables interpolation when scaling
-	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-
-
-*/
-
-
-
-
-
-	
-
-//	glColor3f(red,green,blue);
-
-//	GLfloat a[8][3] = {{1,1,1}, { -1,1,1},  {-1,-1,1},  {1,-1,1},        // v0-v1-v2-v3
-//					   {1,-1,-1},  {1,1,-1}, {-1,1,-1}, {-1,-1,-1}};
-
-// GLfloat a[] = {1,1,1,  -1,1,1,  -1,-1,1,  1,-1,1,        // v0-v1-v2-v3
-//                       1,-1,-1,  1,1,-1, -1,1,-1, -1,-1,-1};
-
-//GLfloat colors[] = {1,1,1,  1,1,0,  1,0,0,  1,0,1,              // v0-v1-v2-v3
-//                    1,1,1,  1,0,1,  0,0,1,  0,1,1};
-
-
-//GLfloat a[]={1,1,1,  -1,1,1, -1,-1,1 ,1,-1,1,
-//			 1,1,1,  1,0,1,  0,0,1,  0,1,1,
-//			 1,1,1,  1,1,-1,  -1,1,-1,  -1,1,1,        // v0-v5-v6-v1
-//			 -1,1,1,  -1,1,-1,  -1,-1,-1,  -1,-1,1,    // v1-v6-v7-v2
-//			 -1,-1,-1,  1,-1,-1,  1,-1,1,  -1,-1,1,    // v7-v4-v3-v2
-//			 1,-1,-1,  -1,-1,-1,  -1,1,-1,  1,1,-1};
-
-
-//GLfloat colors[] = {1,1,1,  1,1,0,  1,0,0,  1,0,1,              // v0-v1-v2-v3
-//                    1,1,1,  1,0,1,  0,0,1,  0,1,1,              // v0-v3-v4-v5
-//                    1,1,1,  0,1,1,  0,1,0,  1,1,0,              // v0-v5-v6-v1
-//                    1,1,0,  0,1,0,  0,0,0,  1,0,0,              // v1-v6-v7-v2
-//                    0,0,0,  0,0,1,  1,0,1,  1,0,0,              // v7-v4-v3-v2
-//                    0,0,1,  0,0,0,  0,1,0,  0,1,1};  
-
-//elem=new GLshort*[6];
-//						for(int i=0; i<6; i++)
-//						{
-//							elem[i] = new GLshort[4];
-//						}
-
-//						GLshort el[6][4]={{0,1,2,3},
-//										{0,5,4,3},
-//										{5,6,7,4},
-//										{6,1,2,7},
-//										{2,7,4,3},
-//										{1,6,5,0}};
-
-//GLshort indx[]={0,1,2,3,
-//                     0,5,4,3,
-//                     5,6,7,4,
-//                     6,1,2,7,
-//                     2,7,4,3,
-//                     1,6,5,0};
-
-
-
-
-	// ######----------Tetrahedron sort of works---------########
-
-
-	// GLfloat colors[node_count*node_dimensions];
-	// for(int i=0 ;i<node_count*node_dimensions;i++){
-	// 	srand (time(0));
-	// 	colors[i]=static_cast <float> (rand()) / static_cast <float> (RAND_MAX);;
-	// }
-
-//--------OLD DRAW BEGINS-------------
-/*
-	angle+=deltaAngle;
-	angleX+=deltaAngleX;
-
-	// Background Color
-//	glClearColor(1.0f, 1.0f, 1.0f, 1.5f);
-
-
-	// Clear Color and Depth Buffers
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-	// Reset transformations
-	glLoadIdentity();
-
-	// Set the camera
-	gluLookAt(	0.0f, 0.0f, 10.0f,
-			0.0f, 0.0f,  0.0f,
-			0.0f, 1.0f,  0.0f);
-
-	glRotatef(angle, 0.0f, 1.0f, 0.0f);
-	glRotatef(angleX, 1.0f, 0.0f, 0.0f);
-
-
-
- // glEnableClientState(GL_COLOR_ARRAY);
-    glEnableClientState(GL_VERTEX_ARRAY);
-
-
-//	glNormalPointer(GL_FLOAT, 0, normals);
-   // glColorPointer(3, GL_FLOAT, 0, colors);
-    glVertexPointer(3, GL_FLOAT, 0, nodes);
-
-
-	glPushMatrix();
-
-
- //glEnableClientState(GL_COLOR_ARRAY);
-    glEnableClientState(GL_VERTEX_ARRAY);
-
-
-//	glNormalPointer(GL_FLOAT, 0, normals);
-  //  glColorPointer(3, GL_FLOAT, 0, colors);
-    glVertexPointer(3, GL_FLOAT, 0, nodes);
-
-
-	glPushMatrix();
-glColor3f(red,green,blue);
-	glDrawElements(GL_QUADS, elem_count*elem_nodes, GL_UNSIGNED_SHORT, elem);
-glColor3f(1.0f,1.0f,1.0f);
-	glDrawElements(GL_LINES, elem_count*elem_nodes, GL_UNSIGNED_SHORT, elem);
-
-
-    glPopMatrix();
-
-    glDisableClientState(GL_VERTEX_ARRAY);  // disable vertex arrays
-    glDisableClientState(GL_COLOR_ARRAY);
-
-*/
-
-
-//------------OLD DRAW ENDS-----------
-
-//	glBegin(GL_TRIANGLES);
-//		glVertex3f(-2.0f,-2.0f, 0.0f);
-//		glVertex3f( 2.0f, 0.0f, 0.0);
-//		glVertex3f( 0.0f, 2.0f, 0.0);
-//	glEnd();
-	// ########------Tetrahedron ends-------#######
-//	glutSwapBuffers();
-//}
 
 void CreateVBO_CUDA(void)
 {
@@ -570,15 +341,16 @@ GLenum ErrorCheckValue = glGetError();
 
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
 //	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, VertexSize, (GLvoid*)RgbOffset);
-//	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
 
 	glEnableVertexAttribArray(0);
-//	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(1);
 
 
 
 //Register Pixel Buffer Object as CUDA graphics resource
-cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
+	cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
+	//cudaGraphicsGLRegisterBuffer(original_nodes, BufferId, cudaGraphicsMapFlagsNone);
 
 
 
@@ -646,6 +418,44 @@ cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
 
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
 */
+  GLint link_ok = GL_FALSE;
+
+  GLuint vs, fs;
+  if ((vs = create_shader("cube.v.glsl", GL_VERTEX_SHADER))   == 0);
+  if ((fs = create_shader("cube.f.glsl", GL_FRAGMENT_SHADER)) == 0);
+
+  program = glCreateProgram();
+  glAttachShader(program, vs);
+  glAttachShader(program, fs);
+  glLinkProgram(program);
+  glGetProgramiv(program, GL_LINK_STATUS, &link_ok);
+  if (!link_ok) {
+	  fprintf(stderr, "glLinkProgram:");
+	  print_log(program);
+  }
+
+  const char* attribute_name;
+  attribute_name = "coord3d";
+  attribute_coord3d = glGetAttribLocation(program, attribute_name);
+  if (attribute_coord3d == -1) {
+	  fprintf(stderr, "Could not bind attribute %s\n", attribute_name);
+  }
+  attribute_name = "v_color";
+  attribute_v_color = glGetAttribLocation(program, attribute_name);
+  attribute_v_color = (1.0f,1.0f,1.0f);
+  if (attribute_v_color == -1) {
+  	  fprintf(stderr, "Could not bind attribute %s\n", attribute_name);
+  }
+  const char* uniform_name;
+  uniform_name = "mvp";
+  uniform_mvp = glGetUniformLocation(program, uniform_name);
+  if (uniform_mvp == -1) {
+	  fprintf(stderr, "Could not bind uniform %s\n", uniform_name);
+  }
+
+
+
+
 	ErrorCheckValue = glGetError();
 	if (ErrorCheckValue != GL_NO_ERROR)
 	{
@@ -851,17 +661,28 @@ void releaseKey(int key, int x, int y) {
 
 void mouseMove(int x, int y) { 	
 
-         // this will only be true when the left button is down
-         if (xOrigin >= 0) {
+// this will only be true when the left button is down
+         if (buttonn > 0) {
 
-		// update deltaAngle
-		deltaAngle = (x - xOrigin) * 0.01f;
-		deltaAngleX = (y - yOrigin) * 0.01f;
+			 // update deltaAngle
+			 deltaAngle = (x - xOrigin) * 0.01f;
+			 deltaAngleX = (y - yOrigin) * 0.01f;
+		 }
+		else if (buttonn <0){
+
+			DesposX=x;
+			DesposY=y;
+			DposX= -(x-xOrigin);
+			DposY= (y-yOrigin);
+			DposX*=0.0001;
+			DposY*=0.0001;
+
+			}
 
 		// update camera's direction
 		//lx = sin(angle + deltaAngle);
 		//lz = -cos(angle + deltaAngle);
-	}
+		 //}
 }
 
 void mouseButton(int button, int state, int x, int y) {
@@ -880,21 +701,22 @@ void mouseButton(int button, int state, int x, int y) {
 			//deltaMove = 3.0f;
 			//x += deltaMove * lx * 0.1f;
 			//z += deltaMove * lz * 0.1f;
-			scale=1.2;
+			zoom*=0.95;
 		}
 		else if(button==4){
 			//deltaMove = -3.0f;
 			//x += deltaMove * lx * 0.1f;
 			//z += deltaMove * lz * 0.1f;
-			scale=0.8;
+			zoom*=1.05;
 		}
 	}
 
 	//else{  // normal button event
 	//       printf("Button %s At %d %d\n", (state == GLUT_DOWN) ? "Down" : "Up", x, y);
-	   //  }
+	//  }
 	// only start motion if the left button is pressed
 
+	
 	if (button == GLUT_LEFT_BUTTON) {
 
 		// when the button is released
@@ -904,11 +726,27 @@ void mouseButton(int button, int state, int x, int y) {
 			//angle += deltaAngle;
 			xOrigin = -1;
 			yOrigin=-1;
+			buttonn=0;
 		}
 		else  {// state = GLUT_DOWN
+			buttonn=1;
 			xOrigin = x;
 			yOrigin= y;
 			//deltaAngle=0;
+		}
+	}
+	if (button == GLUT_RIGHT_BUTTON) {
+		if (state == GLUT_UP) {	
+			buttonn=0;
+			DposX=0;
+			DposY=0;
+			xOrigin = -1;
+			yOrigin=-1;
+		}
+		else  {// state = GLUT_DOWN
+			buttonn=-1;
+			xOrigin = x;
+			yOrigin= y;
 		}
 	}
 }
@@ -1519,7 +1357,7 @@ string line;
 
 
 	// Some force constant
-	const float force=0.03;
+	const float force=0.04;
 	// Delcare F in only 1 direction
 	for (int i=0;i<(node_count-fixed_nodes_count)*node_dimensions;i++){
 		if(3-(i%3)==1)
@@ -1551,7 +1389,7 @@ string line;
 
 
 	CreateVBO_CUDA();
-//	CreateShaders();
+	//CreateShaders();
 	
 	// No sure I should call this here, is it necessary?
     // run the device part of the program
@@ -1576,13 +1414,13 @@ string line;
 //	int abc=1;
 //	bool a = runTest2(0, (const char **)"", abc);
 
-//	allocate_GPUnodes(d_nodes, nodes, node_count, node_dimensions);
+	allocate_GPUnodes(d_nodes, nodes, node_count, node_dimensions);
 	
 
 
 	glutMainLoop();
 
-//	free_GPUnodes(d_nodes);
+	free_GPUnodes(d_nodes);
 
 	cudaDeviceReset();
 

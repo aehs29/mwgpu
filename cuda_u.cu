@@ -16,6 +16,9 @@
 #include <helper_cuda.h>
 #include <helper_functions.h>
 
+
+__device__ float *d_original_nodes;
+
 __global__ void kInitU(float *d_u, int numElements)
 {
 	int i = blockDim.x * blockIdx.x + threadIdx.x;
@@ -335,44 +338,82 @@ if(totalThreads>512)
     return success;
 }
 
-extern "C" void* allocate_GPUnodes(float *d_nodes, float *nodes, unsigned int node_count, unsigned int node_dimensions)
+extern "C" void allocate_GPUnodes(float *d_nodes, float *nodes, unsigned int node_count, unsigned int node_dimensions)
 {
 //	cudaSetDevice(0);
 //	cudaGLSetGLDevice(0);
-	unsigned int mem_size_nodes = sizeof(float) * node_count * node_dimensions;
-	float *test;
+	unsigned int size_nodes = node_count * node_dimensions;
+
+	unsigned int mem_size_nodes = sizeof(float) * size_nodes;
+
+	
+	
+//	float *test;
+
+	cudaGetSymbolAddress((void **)&d_nodes, d_original_nodes);
  // Error code to check return values for CUDA calls
     cudaError_t error;
 
-    error = cudaMalloc((void **) &test, mem_size_nodes);
+    // error = cudaMalloc((void **) &d_nodes, mem_size_nodes);
+	// if (error != cudaSuccess){
+    //     printf("cudaMalloc d_nodes returned error code %d, line(%d)\n", error, __LINE__);
+    //     exit(EXIT_FAILURE);
+    // }
+
+	// error = cudaMemcpy(d_nodes, nodes, mem_size_nodes, cudaMemcpyHostToDevice);
+
+    // if (error != cudaSuccess)
+    // {
+    //     printf("cudaMemcpy (d_nodes,nodes) returned error code %d, line(%d)\n", error, __LINE__);
+    //     exit(EXIT_FAILURE);
+    // }
+
+
+	error = cudaMalloc((void **) &d_original_nodes, mem_size_nodes);
 	if (error != cudaSuccess){
-        printf("cudaMalloc d_nodes returned error code %d, line(%d)\n", error, __LINE__);
+        printf("cudaMalloc d_u returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
 
-	error = cudaMemcpy(test, nodes, mem_size_nodes, cudaMemcpyHostToDevice);
+	error = cudaMemcpy(d_original_nodes, nodes, mem_size_nodes, cudaMemcpyHostToDevice);
 
     if (error != cudaSuccess)
     {
-        printf("cudaMemcpy (d_nodes,nodes) returned error code %d, line(%d)\n", error, __LINE__);
+        printf("cudaMemcpy (d_nodes,h_nodes) returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
+
+	float *nodes_test;
+
+	nodes_test = (float *) malloc(mem_size_nodes);
+
+
+	error = cudaMemcpy(nodes_test, d_original_nodes, mem_size_nodes, cudaMemcpyDeviceToHost);
+
+    if (error != cudaSuccess)
+    {
+        printf("cudaMemcpy (d_nodes,h_nodes) returned error code %d, line(%d)\n", error, __LINE__);
+        exit(EXIT_FAILURE);
+    }
+
+
+
 
 // 	bool success=true;
 // 	if(error != cudaSuccess)
 // 		success=false;
 // 	return success;
-	return &d_nodes;
+//	return &d_nodes;
 }
 
 extern "C" bool free_GPUnodes(float *d_nodes){
-	cudaFree(d_nodes);
+//	cudaFree(d_nodes);
 	return true;
 }
 
 
 
-extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float * buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float scale){
+extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float * buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float *d_nodes){
 
 
 /*
@@ -400,9 +441,13 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 
 	// u5: eigenC x 1 - same as q
 	
-	float *abc;
-//	cudaGetSymbolAddress((void **)&abc,test);
+//	float *abc;
+//	float * test;
 
+	
+	float *dd_nodes;
+
+	cudaGetSymbolAddress((void **)&d_nodes, d_original_nodes);
 
 /*#########---------Allocate variables---------------#########*/
 
@@ -420,6 +465,22 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 
 	// Number of zeros to insert in u array
 	unsigned int numZeros = fixed_nodes_count *3;
+
+// Error code to check return values for CUDA calls
+    cudaError_t error;
+
+	float *nodes_test;
+
+	nodes_test = (float *) malloc(mem_size_nodes);
+
+
+	error = cudaMemcpy(nodes_test, d_original_nodes, mem_size_nodes, cudaMemcpyDeviceToHost);
+
+    if (error != cudaSuccess)
+    {
+        printf("cudaMemcpy (d_nodes,h_nodes) returned error code %d, line(%d)\n", error, __LINE__);
+        exit(EXIT_FAILURE);
+    }
 
 
 
@@ -450,11 +511,10 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 	float *d_u1, *d_u2, *d_u3, *d_u3c, *d_u4, *d_u5, *d_u, *d_uc;
 
 	// Test d_nodes
-	float *d_nodes;
+	//float *d_nodes;
 
 
- // Error code to check return values for CUDA calls
-    cudaError_t error;
+ 
 
     error = cudaMalloc((void **) &d_u1, mem_size_q);
 	if (error != cudaSuccess){
@@ -563,13 +623,13 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 
 
 	// Test d_nodes
-	error = cudaMalloc((void **) &d_nodes, mem_size_nodes);
+	error = cudaMalloc((void **) &dd_nodes, mem_size_nodes);
 	if (error != cudaSuccess){
         printf("cudaMalloc d_u returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
 
-	error = cudaMemcpy(d_nodes, h_nodes, mem_size_nodes, cudaMemcpyHostToDevice);
+	error = cudaMemcpy(dd_nodes, h_nodes, mem_size_nodes, cudaMemcpyHostToDevice);
 
     if (error != cudaSuccess)
     {
@@ -1019,9 +1079,12 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 /*#########---------Render on OpenGL---------------#########*/
 
 
+
+
+
     dim3 grid(blocks+1, 1, 1);
     dim3 threads(threadsX, 1, 1);
-	kernel<<< grid, threads >>>(buffer, d_nodes, d_u, size_nodes);
+	kernel<<< grid, threads >>>(buffer, d_original_nodes, d_u, size_nodes);
 //	if(totalThreads>512)
 //		kernelRemaining<<< 1,mod >>>(buffer, d_u, scale, threadsDone);
 	getLastCudaError("Kernel execution failed");
@@ -1059,6 +1122,7 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 	cudaFree(d_u1);
 	cudaFree(d_u2);
 	cudaFree(d_u3);
+	cudaFree(d_u3c);
 	cudaFree(d_u4);
 	cudaFree(d_u5);
 	cudaFree(d_alphaI);
@@ -1072,6 +1136,9 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 	cudaFree(d_alpha);
 	cudaFree(d_u);
 	cudaFree(d_uc);
+	cudaFree(d_q);
+	cudaFree(d_qd);
+//	cudaFree(d_nodes);
 
 	bool success=true;
 	if(error != cudaSuccess)

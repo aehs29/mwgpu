@@ -135,7 +135,7 @@ cuda_u.o: cuda_u.cu
 main.o: main.cpp displacement.cpp
 	$(NVCC) $(IPATH) $(LPATH) $(LDLIBS) $(INCLUDES)  $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
-cuda_u: cuda_u.o main.o
+cuda_u: cuda_u.o main.o shader_utils.o
 	$(NVCC) $(ALL_LDFLAGS) -o $@ $+ $(LDLIBS) $(LIBRARIES)
 	mkdir -p ../../bin/$(OS_ARCH)/$(OSLOWER)/$(TARGET)$(if $(abi),/$(abi))
 	cp $@ ../../bin/$(OS_ARCH)/$(OSLOWER)/$(TARGET)$(if $(abi),/$(abi))

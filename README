@@ -21,8 +21,36 @@ CUDA Displacement v 1.1
 - Still have to check DrawElements to see if size is correct
 
 
+#######################
 
 #######################
+CUDA Displacement v 1.2
+
+- Added GLM Library
+- New Rotation Method
+- Perspective now works correctly
+- Added "Dragging" functionality
+- Shaders now work correctly
+
+TODO:
+OpenGL
+- Click to fix face functionality?***
+
+CUDA:
+- Build R matrix?
+- Include R matrix in computation
+- Add Eigenvectors computation***
+
+########################
+
+
+
+
+
+
+
+###############
+EXTRA NOTES
 
 -- Assume matrices are in row major order
 
