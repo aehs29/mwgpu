@@ -11,25 +11,14 @@
 #include "cuPrintf.cu"
 
 
-
-// helper functions and utilities to work with CUDA
+// helper CUDA functions
 #include <helper_cuda.h>
 #include <helper_functions.h>
 
-
 __device__ float *d_original_nodes;
 
-__global__ void kInitU(float *d_u, int numElements)
-{
-	int i = blockDim.x * blockIdx.x + threadIdx.x;
-	if(i<numElements)
-		d_u[i]=0;
-}
 __global__ void kInsertZeros(float *Input, float *Output, unsigned int position, unsigned int number, unsigned int numElements) {
-// Each thread computes one element of C
-// by accumulating results into Cvalue
-	//float c = 0;
-	//i is element in C to be computed
+
 	int i = blockDim.x * blockIdx.x + threadIdx.x;
 
 	if(i<numElements){
@@ -44,19 +33,17 @@ __global__ void kInsertZeros(float *Input, float *Output, unsigned int position,
 		else if(i<position)
 			Output[i]=Input[i];
 	}
-
-
 }
 
+// Based on CUDA sdk example
 template <int BLOCK_SIZE> __global__ void kMatrixMult(float *A, float *B, float *C,int ARows, int ACols, int BRows, int BCols)
 {
-
+	// Do it in blocks, accumulate in C
 	int CRows=ARows;
 	int CCols=BCols;
 	
 	int tx=threadIdx.x;
 	int ty=threadIdx.y;
-
 
 	float CValue = 0;
 
@@ -86,9 +73,6 @@ template <int BLOCK_SIZE> __global__ void kMatrixMult(float *A, float *B, float 
 
     if (Row < CRows && Col < CCols) 
 		C[((blockIdx.y * blockDim.y + ty)*CCols)+(blockIdx.x*blockDim.x)+tx]=CValue;
-
-
-
 }
 
 __global__ void kVectorAdd(float *A, float *B, float *C, unsigned int numElements)
@@ -111,262 +95,66 @@ __global__ void kVectorScalar(float *A, const float scalar , int numElements)
     }
 }
 
-
 __global__ void kMatrixTranspose(float *A, float *B, int rows, int cols)
 {
-
 	int numElements=rows*cols;
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 	// j = current row
 	int j = i/cols;
-		// k =  current col
+	// k =  current col
 	int k = i-(j*cols);
 
     if (i < numElements)
     {
-		// A[j,k]=B[k,j]
-		// A[k*rows+j]=B[j*rows+k]
-		// if j=2, k =3
-		// A[2,3]=12
-		// B[3,2]=15
 	    A[k*rows+j]=B[j*cols+k];
     }
 }
 
 
 __global__ void kMatVector(float *mat, float *vec, float *res, unsigned int RowsMat, unsigned int ColsMat) {
-// Each thread computes one element of C
-// by accumulating results into Cvalue
 	float c = 0;
 	//i is element in C to be computed
 	int i = blockDim.x * blockIdx.x + threadIdx.x;
 
 	if(i > RowsMat) return;
 
-//    if (i < ColsA)
-//    {
-		for(int j=0;j<ColsMat;j++){
-			c += mat[i*ColsMat+j]*vec[j];
-		}
-		res[i]=c;
-//    }
-
-
+	for(int j=0;j<ColsMat;j++){
+		c += mat[i*ColsMat+j]*vec[j];
+	}
+	res[i]=c;
 }
 
-
-
-//__global__ void kernel(float scale)
-__global__ void kernel(float *buffer, float *d_nodes,  float *u, unsigned int totalThreads)
+__global__ void kModBuffer(float *buffer, float *d_nodes,  float *u, unsigned int totalThreads)
 {
-    // write data to global memory
     const unsigned int TID = threadIdx.x;
     const unsigned int BID = blockIdx.x;
 	const unsigned int BDIM = blockDim.x;
-//    float nodes = g_nodes[tid];
 
-    // use integer arithmetic to process all four bytes with one thread
-    // this serializes the execution, but is the simplest solutions to avoid
-    // bank conflicts for this very low number of threads
-    // in general it is more efficient to process each byte by a separate thread,
-    // to avoid bank conflicts the access pattern should be
-    // g_data[4 * wtid + wid], where wtid is the thread id within the half warp
-    // and wid is the warp id
-    // see also the programming guide for a more in depth discussion.
-//    g_data[tid] = ((((data <<  0) >> 24) - 10) << 24)
-//                  | ((((data <<  8) >> 24) - 10) << 16)
-//                  | ((((data << 16) >> 24) - 10) <<  8)
-//                  | ((((data << 24) >> 24) - 10) <<  0);
-
-	// g_nodes[BDIM*BID+TID]=(g_nodes[BDIM*BID+TID])*scale;
 	unsigned int index=BDIM*BID+TID;
 	if(index>totalThreads)
 		return;
+	// Add displacement to original nodes
 	buffer[index]=d_nodes[index]+u[index];
-	// g_nodes[index]=(g_nodes[index])*scale;
-//	scale*scale;
-}
-__global__ void kernelRemaining(float *buffer, float *d_nodes, float *u, float scale, unsigned int threadsDone)
-{
-    // write data to global memory
-    const unsigned int TID = threadIdx.x;
-
-	// g_nodes[threadsDone-1+TID]=(g_nodes[threadsDone-1+TID])*scale;
-	buffer[threadsDone-1+TID]=(d_nodes[threadsDone-1+TID]+u[threadsDone-1+TID]);
-}
-
-//float *cuda_data=NULL;
-extern "C" void map_texture(void *cuda_dat, size_t siz,cudaGraphicsResource *resource)
-{
-size_t size;
-cudaGraphicsResourceGetMappedPointer((void **)(&cuda_dat), &size, resource);
-}
-
-extern "C" bool
-runTest(const int argc, const char **argv, float *buffer, float *u, int node_count, float scale)
-{
-    // use command-line specified CUDA device, otherwise use device with highest Gflops/s
-    //findCudaDevice(argc, (const char **)argv);
-
-
-
-	// CUDA
-//cudaSetDevice(0);
-
-//	cudaGLSetGLDevice(0);
-
-
-
-const unsigned int maxThreadsBlock=512;
-const unsigned int warpSize=32;
-const unsigned int warpsBlock = maxThreadsBlock/warpSize;
-const unsigned int totalThreads = node_count*3;
-const unsigned int warps = totalThreads/warpSize;
-const unsigned int mod = totalThreads%maxThreadsBlock;
-unsigned int blocks = warps/warpsBlock;
-unsigned int threadsDone = maxThreadsBlock*blocks;
-
-unsigned int threadsX;
-
-	if (totalThreads>512)
-		threadsX=maxThreadsBlock;
-	else{
-		threadsX=totalThreads;
-		blocks=1;
-	}
-
-    //const unsigned int num_threads = (node_count*3);
-//	const unsigned int num_threads = 1;
-//    assert(0 == (len % 4));
-    const unsigned int mem_size = sizeof(float) * totalThreads;
-//    const unsigned int mem_size_int2 = sizeof(int2) * len;
-
-    // allocate device memory
-    //float *d_nodes;
-    //checkCudaErrors(cudaMalloc((void **) &d_nodes, mem_size));
-    // copy host memory to device
-    //checkCudaErrors(cudaMemcpy(d_nodes, nodes, mem_size,
-    //                           cudaMemcpyHostToDevice));
-    // allocate device memory for int2 version
-//    int2 *d_data_int2;
-//    checkCudaErrors(cudaMalloc((void **) &d_data_int2, mem_size_int2));
-    // copy host memory to device
- //   checkCudaErrors(cudaMemcpy(d_data_int2, data_int2, mem_size_int2,
-  //                             cudaMemcpyHostToDevice));
-
-	//const int y=num_threads%512;
-
-    cudaError_t error;
-
-	unsigned int mem_size_nodes = sizeof(float) * node_count*3;
-
-	float *d_u;
-
-	error = cudaMalloc((void **) &d_u, mem_size_nodes);
-	if (error != cudaSuccess){
-        printf("cudaMalloc d_u returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
-	error = cudaMemcpy(d_u, u, mem_size_nodes, cudaMemcpyHostToDevice);
-
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (d_u,u) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
-
-
-
-    // setup execution parameters
-    dim3 grid(blocks, 1, 1);
-    dim3 threads(threadsX, 1, 1);
-    //dim3 threads2(len, 1, 1); // more threads needed fir separate int2 version
-//	printf("Executing Kernel, Threads: %u, Scale:%f\n",num_threads,scale);
-    // execute the kernel
-//    kernel<<< grid, threads >>>(scale);
-
-/*
-printf("Blocks:%u\n",blocks);
-printf("ThreadsOnK:%u\n",threadsX);
-printf("Remaining:%u\n",mod);
-printf("threadsDone:%u\n", threadsDone);
-*/
-
-
-
-	// Missing d_nodes!!!
-//    kernel<<< grid, threads >>>(buffer,totalThreads, d_u, scale);
-if(totalThreads>512)
-//	kernelRemaining<<< 1,mod >>>(buffer, d_u, scale, threadsDone);
-    //kernel2<<< grid, threads2 >>>(d_data_int2);
-
 	
-    // check if kernel execution generated and error
-    getLastCudaError("Kernel execution failed");
-
-    // compute reference solutions
-//    char *reference = (char *) malloc(mem_size);
-//    computeGold(reference, data, len);
-//    int2 *reference2 = (int2 *) malloc(mem_size_int2);
-//    computeGold2(reference2, data_int2, len);
-
-    // copy results from device to host
-   // checkCudaErrors(cudaMemcpy(nodes, d_nodes, mem_size,
-     //                          cudaMemcpyDeviceToHost));
-//    checkCudaErrors(cudaMemcpy(data_int2, d_data_int2, mem_size_int2,
-//                               cudaMemcpyDeviceToHost));
-
-    // check result
-    bool success = true;
-
-//    for (unsigned int i = 0; i < len; i++)
-//    {
-//        if (reference[i] != data[i] ||
-//            reference2[i].x != data_int2[i].x ||
-//            reference2[i].y != data_int2[i].y)
-//        {
-//            success = false;
-//        }
-//    }
-
-    // cleanup memory
-//    checkCudaErrors(cudaFree(d_nodes));
-//    checkCudaErrors(cudaFree(d_data_int2));
-//    free(reference);
-//    free(reference2);
-
-    return success;
 }
 
-extern "C" void allocate_GPUnodes(float *d_nodes, float *nodes, unsigned int node_count, unsigned int node_dimensions)
+extern "C" void map_Texture(void *cuda_dat, size_t siz,cudaGraphicsResource *resource)
 {
-//	cudaSetDevice(0);
-//	cudaGLSetGLDevice(0);
+	size_t size;
+	cudaGraphicsResourceGetMappedPointer((void **)(&cuda_dat), &size, resource);
+}
+
+
+
+extern "C" void allocate_GPUnodes(float *nodes, unsigned int node_count, unsigned int node_dimensions)
+{
 	unsigned int size_nodes = node_count * node_dimensions;
 
 	unsigned int mem_size_nodes = sizeof(float) * size_nodes;
 
-	
-	
-//	float *test;
-
-	cudaGetSymbolAddress((void **)&d_nodes, d_original_nodes);
- // Error code to check return values for CUDA calls
+	// Error code to check return values for CUDA calls
     cudaError_t error;
 
-    // error = cudaMalloc((void **) &d_nodes, mem_size_nodes);
-	// if (error != cudaSuccess){
-    //     printf("cudaMalloc d_nodes returned error code %d, line(%d)\n", error, __LINE__);
-    //     exit(EXIT_FAILURE);
-    // }
-
-	// error = cudaMemcpy(d_nodes, nodes, mem_size_nodes, cudaMemcpyHostToDevice);
-
-    // if (error != cudaSuccess)
-    // {
-    //     printf("cudaMemcpy (d_nodes,nodes) returned error code %d, line(%d)\n", error, __LINE__);
-    //     exit(EXIT_FAILURE);
-    // }
 
 
 	error = cudaMalloc((void **) &d_original_nodes, mem_size_nodes);
@@ -382,55 +170,39 @@ extern "C" void allocate_GPUnodes(float *d_nodes, float *nodes, unsigned int nod
         printf("cudaMemcpy (d_nodes,h_nodes) returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
-
-	float *nodes_test;
-
-	nodes_test = (float *) malloc(mem_size_nodes);
-
-
-	error = cudaMemcpy(nodes_test, d_original_nodes, mem_size_nodes, cudaMemcpyDeviceToHost);
-
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (d_nodes,h_nodes) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
-
-
-
-
-// 	bool success=true;
-// 	if(error != cudaSuccess)
-// 		success=false;
-// 	return success;
-//	return &d_nodes;
 }
 
 extern "C" bool free_GPUnodes(float *d_nodes){
-//	cudaFree(d_nodes);
+	// Pretty sure this isn'd needed anymore
+	cudaGetSymbolAddress((void **)&d_nodes, d_original_nodes);
+	cudaFree(d_nodes);
 	return true;
 }
 
 
 
-extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float * buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float *d_nodes){
+extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float * buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float *d_nodes, float *h_Psy){
 
 
 /*
 
-alpha,beta,gama: eigencount x eigencount
+  alpha,beta,gama: eigencount x eigencount
 
-q,qd: eigencount x 1
+  q,qd: eigencount x 1
 
-F, u: (node_count x node_dimensions) x 1
+  F, u: (node_count x node_dimensions) x 1
 
-R: (node_count x node_dimensions) x (node_count x node_dimensions)
+  R: (node_count x node_dimensions) x (node_count x node_dimensions)
 
-Phi:  (node_count x node_dimensions) x eigencount
+  Phi:  (node_count x node_dimensions) x eigencount
 
-NewPhi:  (node_count*node_dimensions)-(FixedNodes_count*node_dimensions) x eigencount
+  NewPhi:  (node_count*node_dimensions)-(FixedNodes_count*node_dimensions) x eigencount
 
-newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
+  Psy: Same as NewPhi
+
+  w: same as u
+
+  newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 
 */
 	// u1, u2: eigenC x 1 - same as q
@@ -441,13 +213,6 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 
 	// u5: eigenC x 1 - same as q
 	
-//	float *abc;
-//	float * test;
-
-	
-	float *dd_nodes;
-
-	cudaGetSymbolAddress((void **)&d_nodes, d_original_nodes);
 
 /*#########---------Allocate variables---------------#########*/
 
@@ -466,24 +231,8 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 	// Number of zeros to insert in u array
 	unsigned int numZeros = fixed_nodes_count *3;
 
-// Error code to check return values for CUDA calls
+    // Error code to check return values for CUDA calls
     cudaError_t error;
-
-	float *nodes_test;
-
-	nodes_test = (float *) malloc(mem_size_nodes);
-
-
-	error = cudaMemcpy(nodes_test, d_original_nodes, mem_size_nodes, cudaMemcpyDeviceToHost);
-
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (d_nodes,h_nodes) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
-
-
-
 
 	const unsigned int maxThreadsBlock=512;
 	const unsigned int warpSize=32;
@@ -496,7 +245,7 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 
 	unsigned int threadsX;
 
-	if (totalThreads>512)
+	if (totalThreads>512)		// Depends on card
 		threadsX=maxThreadsBlock;
 	else{
 		threadsX=totalThreads;
@@ -505,16 +254,13 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 
 
 	// Declare used variables on device
-	float *d_alphaI, *d_qo, *d_beta, *d_qdo, *d_Ro, *d_Phi, *d_Fo, *d_gama, *d_alpha, *d_q, *d_qd;
+	float *d_alphaI, *d_qo, *d_beta, *d_qdo, *d_Ro, *d_Phi, *d_Fo, *d_gama, *d_alpha, *d_q, *d_qd, *d_w, *d_Psy;
 
 	// Declare u's on device
 	float *d_u1, *d_u2, *d_u3, *d_u3c, *d_u4, *d_u5, *d_u, *d_uc;
 
-	// Test d_nodes
-	//float *d_nodes;
 
-
- 
+/*#########---------Device Memory Allocation---------------#########*/ 
 
     error = cudaMalloc((void **) &d_u1, mem_size_q);
 	if (error != cudaSuccess){
@@ -614,32 +360,27 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         printf("cudaMalloc d_q returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
 	}
-  error = cudaMalloc((void **) &d_uc, mem_size_nodes);
+	error = cudaMalloc((void **) &d_uc, mem_size_nodes);
 	if (error != cudaSuccess){
         printf("cudaMalloc d_uc returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
 
-
-
-	// Test d_nodes
-	error = cudaMalloc((void **) &dd_nodes, mem_size_nodes);
+	error = cudaMalloc((void **) &d_Psy, mem_size_Phi);
 	if (error != cudaSuccess){
-        printf("cudaMalloc d_u returned error code %d, line(%d)\n", error, __LINE__);
+        printf("cudaMalloc d_Psy returned error code %d, line(%d)\n", error, __LINE__);
+        exit(EXIT_FAILURE);
+    }
+	error = cudaMalloc((void **) &d_w, mem_size_nodes);
+	if (error != cudaSuccess){
+        printf("cudaMalloc d_w returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
 
-	error = cudaMemcpy(dd_nodes, h_nodes, mem_size_nodes, cudaMemcpyHostToDevice);
-
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (d_nodes,h_nodes) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
+/*#########---------Device Memory Allocation---------------#########*/ 
 
 
-
-// copy host memory to device
+/*#########---------Host-to-Device Memory copy---------------#########*/ 
 
     error = cudaMemcpy(d_alphaI, h_alphaI, mem_size_coef, cudaMemcpyHostToDevice);
 
@@ -705,30 +446,37 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
+    error = cudaMemcpy(d_Psy, h_Psy, mem_size_Phi, cudaMemcpyHostToDevice);
+
+    if (error != cudaSuccess)
+    {
+        printf("cudaMemcpy (d_Phi,h_eigenVecs) returned error code %d, line(%d)\n", error, __LINE__);
+        exit(EXIT_FAILURE);
+    }
+/*#########---------Host-to-Device Memory copy---------------#########*/ 
+
+
+
 /*#########---------Ends variables allocation---------------#########*/
 
 
 
 /*#########---------Get qd---------------#########*/
 
-	// Setup Kernel parameters
-/*###---------------------------------------------####*/
-
-
 /*###----------------First Part--------------------####*/ 
-        // First part
-		// eigenC x 1
-		// u1=(alpha-Identity)*qo       Can be done with VectorAdd Kernel, say whaat?
+	// First part
+	// eigenC x 1
+	// u1=(alpha-Identity)*qo       Can be done with VectorAdd Kernel, say whaat?
 
-		error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
+	error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
 
-		//Launch one extra block to make it multiple of 32
+	//Launch one extra block to make it multiple of 32
 	unsigned int threadsPB= 512;
 	unsigned int BPG = (eigencount + threadsPB - 1) / threadsPB;
 	dim3 threadsPerBlock(threadsPB);
 	dim3 blocksPerGrid(BPG);
-	// printf("CUDA MatByVec (u1) kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
-		// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
+
+	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
 	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_alphaI, d_qo, d_u1, eigencount, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
@@ -737,13 +485,17 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
-	error = cudaMemcpy(h_q, d_u1, mem_size_q, cudaMemcpyDeviceToHost);
 
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
+	// remove this
+
+	// error = cudaMemcpy(h_q, d_u1, mem_size_q, cudaMemcpyDeviceToHost);
+
+    // if (error != cudaSuccess)
+    // {
+    //     printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
+    //     exit(EXIT_FAILURE);
+    // }
+
 //--------------------Second Part-------------------	
 
 	// Second part
@@ -751,8 +503,8 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 	// u2=beta*qdo
 
 	// Same kernel parameters as for u1
-	// printf("CUDA MatByVec (u2) kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
-		// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
+
+	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
 	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_beta, d_qdo, d_u2, eigencount, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
@@ -761,15 +513,20 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
-	error = cudaMemcpy(h_q, d_u2, mem_size_q, cudaMemcpyDeviceToHost);
+	// remove this
+	// error = cudaMemcpy(h_q, d_u2, mem_size_q, cudaMemcpyDeviceToHost);
 
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
+    // if (error != cudaSuccess)
+    // {
+    //     printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
+    //     exit(EXIT_FAILURE);
+    // }
 
 //-------------------------Third Part .1 --------------------------	
+
+
+
+	// Very OLD code - Need it later
 
 	// Third part should be in a different variable to use it again on q
 
@@ -796,7 +553,6 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 	// FOR NOW U3=Phi
 	//d_u3=d_Phi;
 
-//	__syncthreads()
 
 //-------------------------Third Part .2-----------------------------
 
@@ -812,17 +568,19 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
-	error = cudaMemcpy(h_Ro, d_u3c, mem_size_Phi, cudaMemcpyDeviceToHost);
+	// remove this
+	// error = cudaMemcpy(h_Ro, d_u3c, mem_size_Phi, cudaMemcpyDeviceToHost);
 
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
+    // if (error != cudaSuccess)
+    // {
+    //     printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
+    //     exit(EXIT_FAILURE);
+    // }
+
 	// New kernel parameters
 	unsigned int numElements = (size_nodes-size_fixed)*size_eigen;
 	blocksPerGrid=(numElements + threadsPB - 1) / threadsPB;
-    // printf("CUDA kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
+
 	// Arguments: Result, Original, # Elements in Matrix
     kMatrixTranspose<<< blocksPerGrid, threadsPerBlock>>>(d_u3,d_u3c, size_nodes-size_fixed, size_eigen);
     error = cudaGetLastError();
@@ -832,21 +590,23 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
-	error = cudaMemcpy(h_Ro, d_u3, mem_size_Phi, cudaMemcpyDeviceToHost);
 
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
+	// remove this
+	// error = cudaMemcpy(h_Ro, d_u3, mem_size_Phi, cudaMemcpyDeviceToHost);
+
+    // if (error != cudaSuccess)
+    // {
+    //     printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
+    //     exit(EXIT_FAILURE);
+    // }
 
 //------------------------Third part .3-----------------------------
 	// Third part .3
 	// eigencount x 1
     // u4 = u3*Fo
 	blocksPerGrid=(eigencount + threadsPB - 1) / threadsPB;
-	// printf("CUDA MatByVec (u4) kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
-		// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
+
+	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
 	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_u3, d_Fo, d_u4, eigencount, size_nodes-size_fixed);
     error = cudaGetLastError();
     if (error != cudaSuccess)
@@ -855,20 +615,21 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
-	error = cudaMemcpy(h_q, d_u4, mem_size_q, cudaMemcpyDeviceToHost);
+	// Remove this
+	// error = cudaMemcpy(h_q, d_u4, mem_size_q, cudaMemcpyDeviceToHost);
 
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
+    // if (error != cudaSuccess)
+    // {
+    //     printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
+    //     exit(EXIT_FAILURE);
+    // }
 //-----------------------Part 4-----------------------
 	// eigencount x 1
     // u5 = gama*u4
 
 	// Same kernel params as u4
-	// printf("CUDA MatByVec (u5) kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
-		// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
+
+	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
 	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_gama, d_u4, d_u5, eigencount, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
@@ -877,24 +638,23 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
-	error = cudaMemcpy(h_q, d_u5, mem_size_q, cudaMemcpyDeviceToHost);
+	// remove this
+	// error = cudaMemcpy(h_q, d_u5, mem_size_q, cudaMemcpyDeviceToHost);
 
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
+    // if (error != cudaSuccess)
+    // {
+    //     printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
+    //     exit(EXIT_FAILURE);
+    // }
 
 //--------------------------------------------
-	// Fourht part sum all and divive by h
+	// Fourth part sum all and divive by h
 	// u2=u2+u5
 	// vector + vector kernel u2=u2+u5
 
 	// Same kernel parameters
-	// printf("CUDA MatByVec (u2.2) kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
-		// Arguments: VectorOrig&Res, Vector2, # of Elements
-		// CHECK
-		// Arguments: Vector1, Vector2, VectorResult,  # of Elements
+
+	// Arguments: Vector1, Vector2, VectorResult,  # of Elements
 	kVectorAdd<<< blocksPerGrid, threadsPerBlock>>>(d_u2, d_u5, d_u2, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
@@ -903,22 +663,15 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
-	 error = cudaMemcpy(h_q, d_u2, mem_size_q, cudaMemcpyDeviceToHost);
-
-    // if (error != cudaSuccess)
-    // {
-    //     printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
-    //     exit(EXIT_FAILURE);
-    //}
-	// syncthreads()
-
+	// remove this
+	// error = cudaMemcpy(h_q, d_u2, mem_size_q, cudaMemcpyDeviceToHost);
 
 	// qd=(u1+u2)/h
 
 	// vector + vector u1=u1+u2
 	// Same kernel parameters
-	// printf("CUDA VectorAdd (u1.2) kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
-		// Arguments: Vector1, Vector2, VectorResult,  # of Elements
+
+	// Arguments: Vector1, Vector2, VectorResult,  # of Elements
 	kVectorAdd<<< blocksPerGrid, threadsPerBlock>>>(d_u1, d_u2, d_qd, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
@@ -926,9 +679,10 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         fprintf(stderr, "Failed to launch VectorAdd kernel (u1.2) (error code %s)!\n", cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
+
 	// vector by scalar kernel
 	// qd=u1*1/h
-	// printf("CUDA kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
+
 	// Arguments: vector, scalar, # elements
     kVectorScalar<<< blocksPerGrid, threadsPerBlock>>>(d_qd, 1/h_h,  eigencount);
     error = cudaGetLastError();
@@ -939,13 +693,9 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
     }
 
 
-	 error = cudaMemcpy(h_q, d_qd, mem_size_q, cudaMemcpyDeviceToHost);
+	// remove this
+	// error = cudaMemcpy(h_q, d_qd, mem_size_q, cudaMemcpyDeviceToHost);
 
-    // if (error != cudaSuccess)
-    // {
-    //     printf("cudaMemcpy (h_q,d_q) returned error code %d, line(%d)\n", error, __LINE__);
-    //     exit(EXIT_FAILURE);
-    // }
 /*#########---------Ends Get qd---------------#########*/
 
 
@@ -957,8 +707,7 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 
 	// Same parameters as other kernels
 
-	// printf("CUDA MatByVec (u1.q) kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
-		// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
+	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
 	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_alpha, d_qo, d_u1, eigencount, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
@@ -967,14 +716,15 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
-		error = cudaMemcpy(h_q, d_u1, mem_size_q, cudaMemcpyDeviceToHost);
+	// remove this
+	// error = cudaMemcpy(h_q, d_u1, mem_size_q, cudaMemcpyDeviceToHost);
 
 	// Second part
 	// eigenC x 1
 	// q=u1+u2
-// Same kernel parameters
-	// printf("CUDA VectorAdd (q) kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
-		// Arguments: Vector1, Vector2, VectorResult,  # of Elements
+    // Same kernel parameters
+
+	// Arguments: Vector1, Vector2, VectorResult,  # of Elements
 	kVectorAdd<<< blocksPerGrid, threadsPerBlock>>>(d_u1, d_u2, d_q, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
@@ -982,29 +732,20 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         fprintf(stderr, "Failed to launch VectorAdd kernel (u1.2) (error code %s)!\n", cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
-		error = cudaMemcpy(h_q, d_q, mem_size_q, cudaMemcpyDeviceToHost);
+	// remove this
+	// error = cudaMemcpy(h_q, d_q, mem_size_q, cudaMemcpyDeviceToHost);
 
 	
 /*#########---------Ends Get q---------------#########*/
 
 /*#########---------Calculate u---------------#########*/
 
-	   	// blocksPerGrid =(size_nodes + threadsPB - 1) / threadsPB;
-		// kInitU<<< blocksPerGrid, threadsPerBlock>>>(d_u, size_nodes);
-			
-
-
-
 	//   (node_count x node_dimensions) x 1
 	// u=Phi *q
 
-// Same parameters as other kernels
-
-	// printf("CUDA MatByVec (u) kernel launch with %d blocks of %d threads\n", blocksPerGrid.x, threadsPerBlock.x);
-		// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
 	blocksPerGrid=(size_nodes-size_fixed + threadsPB - 1) / threadsPB;
 
-	// Comment to check openGL stuff and not move
+	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
 	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_Phi, d_q, d_u, size_nodes-size_fixed, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
@@ -1012,35 +753,33 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         fprintf(stderr, "Failed to launch MatByVec kernel (u) (error code %s)!\n", cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
-		error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
+
+	// remove this
+	// error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
 
 /*#########---------Ends Calculate u---------------#########*/
 
 /*#########---------INsert Zeros---------------#########*/
 
-
-    // blocksPerGrid =(size_nodes + numZeros + threadsPB - 1) / threadsPB;
-		blocksPerGrid =(size_nodes + threadsPB - 1) / threadsPB;
-//    printf("CUDA kernel launch with %d blocks of %d threads\n", blocksPerGrid, threadsPerBlock);
+	blocksPerGrid =(size_nodes + threadsPB - 1) / threadsPB;
 	unsigned int position;
 	int i;
    
+	// Insert 0's on desired locations
 	for(i=0;i<fixed_nodes_count;i++){
 		position = fixed_nodes[i]*3;
 		// Arguments: Input Array, Output per kernel, poisiton of first 0, # of consecutive 0's
+		// Reuse arrays to save memory
 		if(i%2==1){
 			kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_uc, d_u, position, 3, size_nodestomodify+(i+1)*3);
-			error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
-	}
+			// remove this
+			// error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
+		}
 		else{
 			kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_u, d_uc, position, 3, size_nodestomodify+(i+1)*3);
-			error = cudaMemcpy(h_u, d_uc, mem_size_nodes, cudaMemcpyDeviceToHost);
+			// remove this
+			// error = cudaMemcpy(h_u, d_uc, mem_size_nodes, cudaMemcpyDeviceToHost);
 		}
-
-
-		
-
-
 
 		error = cudaGetLastError();
 
@@ -1051,11 +790,9 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 		}
 	}
 
-//	printf("Copy output data from the CUDA device to the host memory\n");
 
+	// Copy correct array
 	if(i%2==0)
-		//err = cudaMemcpy(d_u, d_Output, sizeInput+sizeZeros, cudaMemcpyDeviceToHost);
-//	else
 		error = cudaMemcpy(d_u, d_uc, size_nodes, cudaMemcpyDeviceToDevice);
 
 
@@ -1065,13 +802,13 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
-
-		error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess)
-		{
-			fprintf(stderr, "Failed to copy output from device to host (error code %s)!\n", cudaGetErrorString(error));
-			exit(EXIT_FAILURE);
-		}
+	// remove this
+	// error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
+	// if (error != cudaSuccess)
+	// {
+	// 	fprintf(stderr, "Failed to copy output from device to host (error code %s)!\n", cudaGetErrorString(error));
+	// 	exit(EXIT_FAILURE);
+	// }
 
 /*#########---------INsert Zeros---------------#########*/
 
@@ -1079,23 +816,26 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 /*#########---------Render on OpenGL---------------#########*/
 
 
-
-
-
+	// TODO change variable names
     dim3 grid(blocks+1, 1, 1);
     dim3 threads(threadsX, 1, 1);
-	kernel<<< grid, threads >>>(buffer, d_original_nodes, d_u, size_nodes);
-//	if(totalThreads>512)
-//		kernelRemaining<<< 1,mod >>>(buffer, d_u, scale, threadsDone);
-	getLastCudaError("Kernel execution failed");
+	kModBuffer<<< grid, threads >>>(buffer, d_original_nodes, d_u, size_nodes);
 
+	error = cudaGetLastError();
+
+	if (error != cudaSuccess)
+	{
+		fprintf(stderr, "Failed to launch ModBuffer kernel (error code %s)!\n", cudaGetErrorString(error));
+		exit(EXIT_FAILURE);
+	}
 
 /*#########---------Render on OpenGL---------------#########*/
 
 
-
 /*#########---------Free Memory---------------#########*/
- // Copy result from device to host
+	// Copy result from device to host
+
+    // This isnt needed?
     error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
 
     if (error != cudaSuccess)
@@ -1103,6 +843,8 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         printf("cudaMemcpy (h_u,d_u) returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
+
+    // Should copy to hqo instead
     error = cudaMemcpy(h_q, d_q, mem_size_q, cudaMemcpyDeviceToHost);
 
     if (error != cudaSuccess)
@@ -1111,6 +853,7 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
         exit(EXIT_FAILURE);
     }
 
+    // Same, should copy to old array
     error = cudaMemcpy(h_qd, d_qd, mem_size_q, cudaMemcpyDeviceToHost);
 
     if (error != cudaSuccess)
@@ -1138,7 +881,9 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 	cudaFree(d_uc);
 	cudaFree(d_q);
 	cudaFree(d_qd);
-//	cudaFree(d_nodes);
+	cudaFree(d_Psy);
+	cudaFree(d_w);
+
 
 	bool success=true;
 	if(error != cudaSuccess)
@@ -1147,4 +892,4 @@ newF & R: 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 		
 
 /*#########---------Ends Free Memory---------------#########*/
-	}
+}

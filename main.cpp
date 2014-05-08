@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sstream>
 #include <time.h>
+#include <iomanip>
 
 
 // OpenGl Includes
@@ -21,47 +22,56 @@
 #include <vector_types.h>
 #include <cuda_gl_interop.h>
 
-
+/* GLM */
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "shader_utils.h"
 
-
+// Serial Displacement
 #include "displacement.cpp"
 
 using namespace std;
 
 
-int sizeBuffer;
-
-
+// Arrays from files
 float *nodes;
+float *nodes_orig;				// For serial code
 GLshort *elem;
 float *eigenVals;
 float *eigenVecs;
 int *fixed_nodes;
 float *d_nodes;
+float *Psy;
 
 
 // Declare Coefficients 
 // Square matrices dimensions: #eigenvals
-float *d,*alpha, *alphaI,*beta,*gama,*M,*C;
+float *d,*alpha, *alphaI,*beta,*gama, *C, *M;
 float *F, *Fo, *q, *qo, *qd, *qdo, *u, *R, *Ro;
+
+
+const int block_size=16;	// Change this according to NVIDIA Card
+
+// Timestep
 float h;
 
 
-
+// General counters
 int elem_count, elem_nodes;
 int node_count, node_dimensions;
 int eigencount;
 unsigned int fixed_nodes_count;
 
 
-bool render=true;
+// ToRenderOrNotToRender?, thats the question
+bool render=false;
+
+// Old coloring
 float red=1.0f, blue=0.0f, green=0.0f;
 
-// angle for rotating triangle
+
+// OpenGL rotating variables
 float angle = 0.0f;
 float deltaAngle = 0.0f;
 int xOrigin = -1;
@@ -70,52 +80,48 @@ float angleX = 0.0f;
 float deltaAngleX = 0.0f;
 int yOrigin=-1;
 
-float scale=1.0;
+
+// OpenGL Zoom
 float zoom=-5.0;
 
+
+// OpenGL "Dragging"
 float posX=0.0, posY =0.0;
 float DposX=0.0,DposY=0.0;
 float DesposX=0.0, DesposY=0.0;
 int buttonn=0;
 
-GLuint program;
+// Force vector vars
+float force=0.04;
+bool force_changed=false;
+float force_constant=0.01;
+int force_axis=1;				// Y axis
 
-GLint uniform_mvp;
-GLint attribute_coord3d, attribute_v_color;
-
-
-
+// CUDA resources for buffer on GPU
 cudaGraphicsResource *resources[1];
-//cudaGraphicsResource *original_nodes[1];
+size_t size_resources;
+float *cuda_dat = NULL;			// Pointer to map resources
 
+bool CUDAResult;
 
-//extern "C" bool MatrixMult (float *h_A, float *h_B, float *h_C , int RowsA, int ColsA, int RowsB, int ColsB, const int block_size);
-
-//extern "C" bool runTest2(const int argc, const char **argv, int i);
-	bool bTestResult;
-extern "C" bool runTest(const int argc, const char **argv, float * buffer, float *u,  int node_count, float scale);
-extern "C" void map_texture(void *cuda_data, size_t size,cudaGraphicsResource *resource);
-
-extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float *buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float *d_nodes);
-
-extern "C" void* allocate_GPUnodes(float *d_nodes, float *nodes, unsigned int node_count, unsigned int node_dimensions);
-extern "C" bool free_GPUnodes(float *d_nodes);
-
-
-
-
-void DestroyShaders(void);
-void DestroyVBO(void);
-
-
-
-size_t BufferSize,VertexSize;
-int CurrentWidth = 600,
-	CurrentHeight = 480,
+// GLUT vars
+int CurrentWidth = 800,
+	CurrentHeight = 600,
 	WindowHandle = 0;
 
+// Parallel or Serial
+bool parallel=false;
+
+// Performance measurement
+static unsigned int fps_start = 0;
+static unsigned int fps_frames = 0;
+int tpf;
+
+
+// Virtual Buffer Objects (VBO's) vars
+size_t BufferSize,VertexSize;
 GLuint
-	VertexShaderId,
+    VertexShaderId,
 	FragmentShaderId,
 	ProgramId,
 	VaoId,
@@ -123,38 +129,34 @@ GLuint
 	IndexBufferId[2],
 	ActiveIndexBuffer = 0;
 
-const GLchar* VertexShader =
-{
-	"#version 400\n"\
-
-	"layout(location=0) in vec3 in_Position;\n"\
-	"layout(location=0) in vec3 in_Color;\n"\
-	"uniform mat4 mvp;\n"\
-	"out vec4 ex_Color;\n"\
-
-	"void main(void)\n"\
-	"{\n"\
-	"	gl_Position = mvp*vec4(in_Position,1.0);\n"\
-	"	ex_Color = vec4(in_Color,1.0);\n"\
-	"}\n"
-};
-
-const GLchar* FragmentShader =
-{
-	"#version 400\n"\
-
-	"in vec4 ex_Color;\n"\
-	"out vec4 out_Color;\n"\
-
-	"void main(void)\n"\
-	"{\n"\
-	"	out_Color = ex_Color;\n"\
-	"}\n"
-};
+// GLSL variables
+//GLuint program;
+GLint uniform_mvp;
+GLint attribute_coord3d, attribute_v_color;
 
 
-size_t siz;
-float *cuda_dat = NULL;
+// Functions
+void ResizeFunction(int Width, int Height);
+void IdleFunction(void);
+void RenderFunction(void);
+void CreateVBO_CUDA(void);
+void processSpecialKeys(int key, int x, int y);
+void releaseKey(int key, int x, int y) ;
+void mouseMove(int x, int y);
+void mouseButton(int button, int state, int x, int y) ;
+void change_force(float *F, float *Fo, unsigned int node_count, unsigned int fixed_nodes_count, unsigned int node_dimensions, float force, int force_axis);
+void Cleanup(void);
+void DestroyShaders(void);
+void DestroyVBO(void);
+
+
+// Functions to call CUDA (compiled with nvcc)
+extern "C" void map_Texture(void *cuda_data, size_t size,cudaGraphicsResource *resource);
+extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float *buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float *d_nodes, float *h_Psy);
+extern "C" void* allocate_GPUnodes(float *nodes, unsigned int node_count, unsigned int node_dimensions);
+extern "C" bool free_GPUnodes(float *d_nodes);
+
+
 
 void ResizeFunction(int Width, int Height)
 {
@@ -166,23 +168,60 @@ if (Height == 0)
 	CurrentWidth = Width;
 	CurrentHeight = Height;
 	glViewport(0, 0, CurrentWidth, CurrentHeight);
-//	gluPerspective(45.0f, ratio, 0.1f, 100.0f); // ULTRA DANGER
+//	gluPerspective(45.0f, ratio, 0.1f, 100.0f); // DANGER
 	glMatrixMode(GL_MODELVIEW);
 }
 
 void IdleFunction(void)
 {
+
+	fps_frames++;
+    int delta_t = glutGet(GLUT_ELAPSED_TIME) - fps_start;
+    if (delta_t > 1000) {
+		// cout << delta_t / fps_frames << endl;
+		tpf=delta_t / fps_frames;
+		fps_frames = 0;
+		fps_start = glutGet(GLUT_ELAPSED_TIME);
+	}
+
+	// Only calculate if needed
+	if (force_changed=true){
+		force_changed=false;
+		change_force(F, Fo, node_count, fixed_nodes_count, node_dimensions, force, force_axis);
+	}
+
+	// Window Title Info
+	char buffer[50];
+	char axis;
+	switch(force_axis){
+	case 1:
+		axis='Y';
+		break;
+	case 2:
+		axis='X';
+		break;
+	case 3:
+		axis='Z';
+		break;
+
+	}
+	int n=sprintf(buffer,"TPF:%d, Force=%0.3f, Axis:%c, Render:%d",tpf,force,axis,render);
+	glutSetWindowTitle(buffer);
+
+	// Dragging and Rotating
 	posX+=DposX;
 	posY+=DposY;
 	angle+=deltaAngle;
 	angleX+=deltaAngleX;
-	// float angle = glutGet(GLUT_ELAPSED_TIME) / 1000.0 * 45;  // 45° per second
+
+
+	// GLM Matrices
 	glm::vec3 axis_y(0, 1, 0);
 	glm::vec3 axis_x(1, 0, 0);
 	glm::mat4 anim = glm::rotate(glm::mat4(1.0f), angle, axis_y);
 	glm::mat4 animy = glm::rotate(glm::mat4(1.0f), angleX, axis_x);
 
-	// Push the cube so its not close to the camera
+	// Push object so its not close to the camera
 	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, zoom));
 
 //	glm::mat4 modelcenter = glm::translate(glm::mat4(1.0f), glm::vec3(0.4, 10.0, 0.0));
@@ -192,332 +231,151 @@ void IdleFunction(void)
 	// Perspective
 	glm::mat4 projection = glm::perspective(45.0f, 1.0f*CurrentWidth/CurrentHeight, 0.1f, 100.0f);
 
+	// Calculate result
 	glm::mat4 mvp = projection * view * model * anim * animy;
 
-	glUseProgram(program);
+	glUseProgram(ProgramId);
 	glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
-
 	glutPostRedisplay();
 }
 
 void RenderFunction(void)
 {
-
-//	if (deltaMove)
-//		computePos(deltaMove);
-	//++FrameCount;
+	// For rotation
 	angle+=deltaAngle;
 	angleX+=deltaAngleX;
-	
-	//Modify();
+   
+    
 
+	// Calculate & Render Displacement
 
-
-//Map the graphics resource to the CUDA stream
-
-	if (cudaGraphicsMapResources(1, resources,0) != cudaSuccess)
-        printf("Resource mapping failed...\n");
-	// if (cudaGraphicsMapResources(1, original_nodes,0) != cudaSuccess)
-    //      printf("Resource mapping failed...\n");
-	if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &siz, *resources) !=cudaSuccess)
-	    printf("Resource pointer mapping failed...\n");
-	 // if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat_original, &siz, *original_nodes) !=cudaSuccess)
-	 //     printf("Resource pointer mapping failed...\n");
-
-
-
-	// Get displacement
-
-/* Parallel Code*/
-
-
-	const int block_size=16;
-	bool disp ;
-//	long * uAdd;
+    /* Parallel Code*/
 
 	if(render==true){
-		disp = displacement (q, qo, qd, qdo, F, Fo, Ro, alpha, alphaI, beta, gama, eigenVecs, h, u, eigencount, node_count, node_dimensions, block_size, cuda_dat, nodes, fixed_nodes, fixed_nodes_count, d_nodes);
+		if(parallel==true){
+            // Get pointer on GPU
+			if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &size_resources, *resources) !=cudaSuccess)
+				printf("Resource pointer mapping failed...\n");
 
-//	free(u);
-//	u = new float[node_count*node_dimensions];
+			CUDAResult = displacement (q, qo, qd, qdo, F, Fo, Ro, alpha, alphaI, beta, gama, eigenVecs, h, u, eigencount, node_count, node_dimensions, block_size, cuda_dat, nodes, fixed_nodes, fixed_nodes_count, d_nodes, Psy);
+		}
+		else{
+    /*Serial Code*/
 
+			displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, node_count-fixed_nodes_count, node_dimensions, node_count, fixed_nodes, nodes, nodes_orig);
+		
+			glBindBuffer(GL_ARRAY_BUFFER, BufferId);
+			glBufferSubData(GL_ARRAY_BUFFER,0, BufferSize, nodes);   
+			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
+			glEnableVertexAttribArray(0); 
+			
+		}
 
-	//printf("Address:%l\n",uAdd);
-
-
-/*Serial Code*/
-
-//	displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, node_count, node_dimensions);
-
-
-
-
-	// Copy Old values
-	std::copy(qd,qd+eigencount,qdo);
-	std::copy(q,q+eigencount,qo);
+		// Copy Old values
+		std::copy(qd,qd+eigencount,qdo);
+		std::copy(q,q+eigencount,qo);
 //	std::copy(R,R+tot_rowCount,Ro);
-	std::copy(F,F+((node_count-fixed_nodes_count)*node_dimensions),Fo);
-
-
+		std::copy(F,F+((node_count-fixed_nodes_count)*node_dimensions),Fo);
 	}
-
-	// TODO add u (displaement)
-//	bTestResult = runTest(0, (const char **)"", cuda_dat, u, node_count,scale);
-scale=1.0;
-
-
-
-//cudaGLUnmapBufferObject(&ptr,BufferId);
-cudaGraphicsUnmapResources(1, resources);
- 
-
- 
-//Destroy the CUDA stream
-//cudaStreamDestroy(cuda_stream);
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 
-//	glLoadIdentity();
 
-	//glRotatef(angle, 0.0f, 1.0f, 0.0f);
-	//glRotatef(angleX, 1.0f, 0.0f, 0.0f);
+	// OpenGL Render
 
-/*	if (ActiveIndexBuffer == 0) {
-		glDrawElements(GL_TRIANGLES, 48, GL_UNSIGNED_BYTE, NULL);
-	} else {
-		glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_BYTE, NULL);
-	}
-*/
+	// Old Coloring
+    // glColor3f(red,green,blue);
+    // glDrawElements(GL_QUAD_STRIP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
+	glDrawElements(GL_TRIANGLE_STRIP, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
+    //glDrawElements(GL_TRIANGLE_STRIP, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
 
-	//glDrawElements(GL_TRIANGLES, 48, GL_UNSIGNED_BYTE, NULL);
-
-
-
-
-
-glColor3f(red,green,blue);
-// glDrawElements(GL_QUAD_STRIP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
-glDrawElements(GL_TRIANGLE_STRIP, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
-//glDrawElements(GL_TRIANGLE_STRIP, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
-
-glColor3f(1.0f,1.0f,1.0f);
-//glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
-glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
-//glDrawElements(GL_LINES, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
-
-
+	// glColor3f(1.0f,1.0f,1.0f);
+    //glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
+	glDrawElements(GL_LINES, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
+    //glDrawElements(GL_LINES, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
+    
 	glutSwapBuffers();
 	glutPostRedisplay();
 }
-void Cleanup(void)
-{
-	DestroyShaders();
-	DestroyVBO();
-}
-
 
 void CreateVBO_CUDA(void)
 {
 
-
-GLenum ErrorCheckValue = glGetError();
-
-
-
-	BufferSize = sizeof(float)*node_count*node_dimensions; // 544: 32 per element
-//	BufferSize=sizeof(Vertices); // Square: 96: 24 Nodes * 4 bytes (float) each
-	//const size_t VertexSize = sizeof(Vertices[0]); // 32 per elemen
-	VertexSize = sizeof(nodes[0])*node_dimensions; // Square: 12: 4 bytes (float) * node_dimension (3)
-//	VertexSize = sizeof(nodes[0])*node_dimensions; // 32 per element
-	//const size_t RgbOffset = sizeof(Vertices[0].XYZW); // 16 offset
+    // Sizes
+	BufferSize = sizeof(float)*node_count*node_dimensions; // 544: 32 per element on sphere
+	VertexSize = sizeof(nodes[0])*node_dimensions; // Square: 12: 4 bytes (float) * node_dimension (3) on sphere
 	
+	// Declare VertexA
 	glGenVertexArrays(1, &VaoId);
 	glBindVertexArray(VaoId);
 	
+	// Nodes Buffer
 	glGenBuffers(1, &BufferId);
 	glBindBuffer(GL_ARRAY_BUFFER, BufferId);
 	glBufferData(GL_ARRAY_BUFFER, BufferSize, nodes, GL_DYNAMIC_DRAW);
 
+	// Atributes
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
-//	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, VertexSize, (GLvoid*)RgbOffset);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
-
 	glEnableVertexAttribArray(0);
 	glEnableVertexAttribArray(1);
 
 
-
-//Register Pixel Buffer Object as CUDA graphics resource
-	cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
-	//cudaGraphicsGLRegisterBuffer(original_nodes, BufferId, cudaGraphicsMapFlagsNone);
-
-
-
-
-
-
-
-//let's have a look at the buffer
-    // glBindBuffer(GL_ARRAY_BUFFER, BufferId);
-    // float* mappedBuffer = (float *) glMapBuffer(GL_ARRAY_BUFFER,GL_READ_ONLY);
-    // printf("\tbefore mapping:\n");
-	// 	   for(int h=0;h<node_count*node_dimensions;h++){
-	// 		   printf("Index: %d, Value: %f\n",h,mappedBuffer[h]);
-	// 	   }
-    // glUnmapBuffer(GL_ARRAY_BUFFER);
-    // glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-
-//cudaStream_t cuda_stream;
- 
-//Create CUDA stream
-//Might not be necessary
-//cudaStreamCreate(&cuda_stream);
- 
-//Map the graphics resource to the CUDA stream
-//cudaGraphicsMapResources(1, resources, cuda_stream);
-// map and unmap the cuda resource
-// if (cudaGraphicsMapResources(1, resources,0) != cudaSuccess)
-//         printf("Resource mapping failed...\n");
-//    if (cudaGraphicsUnmapResources(1, &resources, 0) != cudaSuccess)
-//        printf("Resource unmapping failed...\n");
-
-
-
-    // // let's have a look at the buffer again
-    // glBindBuffer(GL_ARRAY_BUFFER, BufferId);
-    // mappedBuffer = (int *) glMapBuffer(GL_ARRAY_BUFFER,GL_READ_ONLY);
-    // printf("\tafter mapping: %d, %d, %d\n",mappedBuffer[0], mappedBuffer[1], 
-    //         mappedBuffer[2]);
-    // glUnmapBuffer(GL_ARRAY_BUFFER);
-    // glBindBuffer(GL_ARRAY_BUFFER, 0);
-
- 
-//Call CUDA function
-//map_texture(cuda_dat, siz, resources[0]);
-//Unmap the CUDA stream
-//cudaGraphicsUnmapResources(1, resources,cuda_stream);
- 
-//Destroy the CUDA stream
-//cudaStreamDestroy(cuda_stream);
-
-//	cudaGLRegisterBufferObject( BufferId );
-
-
+ 	// Element Buffer
 	glGenBuffers(2, IndexBufferId);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, elem_count*elem_nodes*sizeof(elem),elem, GL_STATIC_DRAW);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, elem_count*elem_nodes*sizeof(elem),elem, GL_STATIC_DRAW); // Check Size
 
-	glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, GL_BUFFER_SIZE, &sizeBuffer);
+    // Register Pixel Buffer Object as CUDA graphics resource
+	cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
 
-
-
-/*	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[1]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(AlternateIndices), AlternateIndices, GL_STATIC_DRAW);
-
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
-*/
-  GLint link_ok = GL_FALSE;
-
-  GLuint vs, fs;
-  if ((vs = create_shader("cube.v.glsl", GL_VERTEX_SHADER))   == 0);
-  if ((fs = create_shader("cube.f.glsl", GL_FRAGMENT_SHADER)) == 0);
-
-  program = glCreateProgram();
-  glAttachShader(program, vs);
-  glAttachShader(program, fs);
-  glLinkProgram(program);
-  glGetProgramiv(program, GL_LINK_STATUS, &link_ok);
-  if (!link_ok) {
-	  fprintf(stderr, "glLinkProgram:");
-	  print_log(program);
-  }
-
-  const char* attribute_name;
-  attribute_name = "coord3d";
-  attribute_coord3d = glGetAttribLocation(program, attribute_name);
-  if (attribute_coord3d == -1) {
-	  fprintf(stderr, "Could not bind attribute %s\n", attribute_name);
-  }
-  attribute_name = "v_color";
-  attribute_v_color = glGetAttribLocation(program, attribute_name);
-  attribute_v_color = (1.0f,1.0f,1.0f);
-  if (attribute_v_color == -1) {
-  	  fprintf(stderr, "Could not bind attribute %s\n", attribute_name);
-  }
-  const char* uniform_name;
-  uniform_name = "mvp";
-  uniform_mvp = glGetUniformLocation(program, uniform_name);
-  if (uniform_mvp == -1) {
-	  fprintf(stderr, "Could not bind uniform %s\n", uniform_name);
-  }
-
-
-
-
-	ErrorCheckValue = glGetError();
-	if (ErrorCheckValue != GL_NO_ERROR)
-	{
-		fprintf(
-			stderr,
-			"ERROR: Could not create a VBO: %s \n",
-			gluErrorString(ErrorCheckValue)
-		);
-
-		exit(-1);
-	}
-
+    //Map the graphics resource
+	if (cudaGraphicsMapResources(1, resources,0) != cudaSuccess)
+        printf("Resource mapping failed...\n");
 }
 
 void CreateVBO(void)
 {
-GLenum ErrorCheckValue = glGetError();
-	BufferSize = sizeof(float)*node_count*node_dimensions; // 544: 32 per element
-//	BufferSize=sizeof(Vertices); // Square: 96: 24 Nodes * 4 bytes (float) each
-	//const size_t VertexSize = sizeof(Vertices[0]); // 32 per elemen
-	VertexSize = sizeof(nodes[0])*node_dimensions; // Square: 12: 4 bytes (float) * node_dimension (3)
-//	VertexSize = sizeof(nodes[0])*node_dimensions; // 32 per element
-	//const size_t RgbOffset = sizeof(Vertices[0].XYZW); // 16 offset
+
+    // Sizes
+	BufferSize = sizeof(float)*node_count*node_dimensions; // 544: 32 per element on sphere
+	VertexSize = sizeof(nodes[0])*node_dimensions; // Square: 12: 4 bytes (float) * node_dimension (3) on sphere
 	
+	// Declare VertexA
 	glGenVertexArrays(1, &VaoId);
 	glBindVertexArray(VaoId);
 	
+	// Nodes Buffer
 	glGenBuffers(1, &BufferId);
 	glBindBuffer(GL_ARRAY_BUFFER, BufferId);
-	glBufferData(GL_ARRAY_BUFFER, BufferSize, nodes, GL_DYNAMIC_COPY);
+	glBufferData(GL_ARRAY_BUFFER, BufferSize, nodes, GL_DYNAMIC_DRAW);
 
+	// Atributes
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
-//	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, VertexSize, (GLvoid*)RgbOffset);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
-
 	glEnableVertexAttribArray(0);
-//	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(1);
 
+
+ 	// Element Buffer
 	glGenBuffers(2, IndexBufferId);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, elem_count*elem_nodes*sizeof(elem),elem, GL_STATIC_DRAW);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, elem_count*elem_nodes*sizeof(elem),elem, GL_STATIC_DRAW); // Check Size
 
+    // Register Pixel Buffer Object as CUDA graphics resource
+//	cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
 
-
-/*	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[1]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(AlternateIndices), AlternateIndices, GL_STATIC_DRAW);
-
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
-*/
-	ErrorCheckValue = glGetError();
-	if (ErrorCheckValue != GL_NO_ERROR)
-	{
-		fprintf(
-			stderr,
-			"ERROR: Could not create a VBO: %s \n",
-			gluErrorString(ErrorCheckValue)
-		);
-
-		exit(-1);
-	}
-
+    //Map the graphics resource
+//	if (cudaGraphicsMapResources(1, resources,0) != cudaSuccess)
+	//      printf("Resource mapping failed...\n");
 }
+
+void Cleanup(void){
+	DestroyVBO();
+	DestroyShaders();
+}
+
 void DestroyVBO(void)
 {
 	GLenum ErrorCheckValue = glGetError();
@@ -546,38 +404,67 @@ void DestroyVBO(void)
 		exit(-1);
 	}
 
+	// Unmap CUDA Resources
+    cudaGraphicsUnmapResources(1, resources);
 }
 
-void CreateShaders(void)
-{
-	GLenum ErrorCheckValue = glGetError();
-	
-	VertexShaderId = glCreateShader(GL_VERTEX_SHADER);
-	glShaderSource(VertexShaderId, 1, &VertexShader, NULL);
-	glCompileShader(VertexShaderId);
+ void CreateShaders(void)
+ {
 
-	FragmentShaderId = glCreateShader(GL_FRAGMENT_SHADER);
-	glShaderSource(FragmentShaderId, 1, &FragmentShader, NULL);
-	glCompileShader(FragmentShaderId);
+     // Shaders / GLSL
 
-	ProgramId = glCreateProgram();
-		glAttachShader(ProgramId, VertexShaderId);
-		glAttachShader(ProgramId, FragmentShaderId);
-	glLinkProgram(ProgramId);
-	glUseProgram(ProgramId);
+	 GLenum ErrorCheckValue = glGetError();
 
-	ErrorCheckValue = glGetError();
-	if (ErrorCheckValue != GL_NO_ERROR)
-	{
-		fprintf(
-			stderr,
-			"ERROR: Could not create the shaders: %s \n",
-			gluErrorString(ErrorCheckValue)
-		);
+	 GLint link_ok = GL_FALSE;
 
-		exit(-1);
-	}
-}
+	 if ((VertexShaderId = create_shader("mwgpu.v.glsl", GL_VERTEX_SHADER)) == 0)
+		 exit(-1);
+	 if ((FragmentShaderId = create_shader("mwgpu.f.glsl", GL_FRAGMENT_SHADER)) == 0)
+		 exit(-1);
+
+
+	 ProgramId= glCreateProgram();
+	 glAttachShader(ProgramId, VertexShaderId);
+	 glAttachShader(ProgramId, FragmentShaderId);
+	 glLinkProgram(ProgramId);
+	 glGetProgramiv(ProgramId, GL_LINK_STATUS, &link_ok);
+	 if (!link_ok) {
+		 fprintf(stderr, "glLinkProgram:");
+		 print_log(ProgramId);
+	 }
+
+	 const char* attribute_name;
+	 attribute_name = "coord3d";
+	 attribute_coord3d = glGetAttribLocation(ProgramId, attribute_name);
+	 if (attribute_coord3d == -1) {
+		 fprintf(stderr, "Could not bind attribute %s\n", attribute_name);
+	 }
+	 attribute_name = "v_color";
+	 attribute_v_color = glGetAttribLocation(ProgramId, attribute_name);
+	 attribute_v_color = (1.0f,1.0f,1.0f);
+	 if (attribute_v_color == -1) {
+		 fprintf(stderr, "Could not bind attribute %s\n", attribute_name);
+	 }
+	 const char* uniform_name;
+	 uniform_name = "mvp";
+	 uniform_mvp = glGetUniformLocation(ProgramId, uniform_name);
+	 if (uniform_mvp == -1) {
+		 fprintf(stderr, "Could not bind uniform %s\n", uniform_name);
+	 }
+
+	 ErrorCheckValue = glGetError();
+	 if (ErrorCheckValue != GL_NO_ERROR)
+	 {
+		 fprintf(
+			 stderr,
+			 "ERROR: Could not create a shader: %s \n",
+			 gluErrorString(ErrorCheckValue)
+			 );
+
+		 exit(-1);
+	 }
+
+ }
 
 void DestroyShaders(void)
 {
@@ -608,9 +495,9 @@ void DestroyShaders(void)
 
 void processNormalKeys(unsigned char key, int x, int y) {
 
-	if (key == 27)
+	if (key == 27)				// Escape
 		exit(0);
-	if (key==32){
+	if (key==32){				// Space
 		if(render==true)
 			render=false;
 		else
@@ -620,28 +507,44 @@ void processNormalKeys(unsigned char key, int x, int y) {
 
 
 
-void processSpecialKeys(int key, int x, int y) {
+void processSpecialKeys(int key, int x, int y) 
+{
 
 	switch(key) {
 	case GLUT_KEY_F1 :
-		red = 1.0;
-		green = 0.0;
-		blue = 0.0; 
+		force-=force_constant;
+		force_changed=true;
 		break;
+		// red = 1.0;
+		// green = 0.0;
+		// blue = 0.0;
 	case GLUT_KEY_F2 :
-		red = 0.0;
-		green = 1.0;
-		blue = 0.0; break;
+		force+=force_constant;
+		force_changed=true;
+		break;
+		// red = 0.0;
+		// green = 1.0;
+		// blue = 0.0;
 	case GLUT_KEY_F3 :
-		red = 0.0;
-		green = 0.0;
-		blue = 1.0; break;
+		force_changed=true;
+		force_axis=1;
+		break;
+		// red = 0.0;
+		// green = 0.0;
+		// blue = 1.0; 
 	case GLUT_KEY_F4 :
-		red = 1.0;
-		green = 1.0;
-		blue = 1.0; break;
+		force_changed=true;
+		force_axis=2;
+		break;
+	case GLUT_KEY_F5 :
+		force_changed=true;
+		force_axis=3;
+		break;
+		// red = 1.0;
+		// green = 1.0;
+		// blue = 1.0;
 
-
+		// Rotate object with keys
 		case GLUT_KEY_LEFT : deltaAngle = -0.35f; break;
 		case GLUT_KEY_RIGHT : deltaAngle = 0.35f; break;
 		case GLUT_KEY_UP : deltaAngleX = -0.35f; break;
@@ -649,8 +552,9 @@ void processSpecialKeys(int key, int x, int y) {
 	}
 }
 
-void releaseKey(int key, int x, int y) {
-
+void releaseKey(int key, int x, int y) 
+{
+	// Reset Values
 	switch (key) {
 		case GLUT_KEY_LEFT :
 		case GLUT_KEY_RIGHT : deltaAngle = 0.0f;break;
@@ -659,80 +563,55 @@ void releaseKey(int key, int x, int y) {
 	}
 }
 
-void mouseMove(int x, int y) { 	
+void mouseMove(int x, int y)
+{ 	
+	// Left button is down
+	if (buttonn > 0) {
 
-// this will only be true when the left button is down
-         if (buttonn > 0) {
+		// update deltaAngle
+		deltaAngle = (x - xOrigin) * 0.01f;
+		deltaAngleX = (y - yOrigin) * 0.01f;
+	}
+	else if (buttonn <0){
 
-			 // update deltaAngle
-			 deltaAngle = (x - xOrigin) * 0.01f;
-			 deltaAngleX = (y - yOrigin) * 0.01f;
-		 }
-		else if (buttonn <0){
+		DesposX=x;
+		DesposY=y;
+		DposX= -(x-xOrigin);
+		DposY= (y-yOrigin);
+		DposX*=0.0005;
+		DposY*=0.0005;
 
-			DesposX=x;
-			DesposY=y;
-			DposX= -(x-xOrigin);
-			DposY= (y-yOrigin);
-			DposX*=0.0001;
-			DposY*=0.0001;
-
-			}
-
-		// update camera's direction
-		//lx = sin(angle + deltaAngle);
-		//lz = -cos(angle + deltaAngle);
-		 //}
+	}
 }
 
-void mouseButton(int button, int state, int x, int y) {
+void mouseButton(int button, int state, int x, int y) 
+{
 
-
-// Wheel reports as button 3(scroll up) and button 4(scroll down)
-	if ((button == 3) || (button == 4)) // It's a wheel event
+	// 3 == scroll up, 4 == scroll down
+	if ((button == 3) || (button == 4))
 	{
-		// Each wheel event reports like a button click, GLUT_DOWN then GLUT_UP
-//	       if (state == GLUT_UP) return; // Disregard redundant GLUT_UP events
-//	       printf("Scroll %s At %d %d\n", (button == 3) ? "Up" : "Down", x, y);
-		//if (state == GLUT_UP)
-		//	deltaMove = 0.0f;	
-		//else{
 		if(button==3){
-			//deltaMove = 3.0f;
-			//x += deltaMove * lx * 0.1f;
-			//z += deltaMove * lz * 0.1f;
 			zoom*=0.95;
 		}
 		else if(button==4){
-			//deltaMove = -3.0f;
-			//x += deltaMove * lx * 0.1f;
-			//z += deltaMove * lz * 0.1f;
 			zoom*=1.05;
 		}
 	}
 
-	//else{  // normal button event
-	//       printf("Button %s At %d %d\n", (state == GLUT_DOWN) ? "Down" : "Up", x, y);
-	//  }
-	// only start motion if the left button is pressed
-
-	
 	if (button == GLUT_LEFT_BUTTON) {
 
 		// when the button is released
 		if (state == GLUT_UP) {
 			deltaAngle=0;
 			deltaAngleX=0;
-			//angle += deltaAngle;
 			xOrigin = -1;
 			yOrigin=-1;
 			buttonn=0;
 		}
-		else  {// state = GLUT_DOWN
+		else  {
 			buttonn=1;
 			xOrigin = x;
 			yOrigin= y;
-			//deltaAngle=0;
 		}
 	}
 	if (button == GLUT_RIGHT_BUTTON) {
@@ -743,7 +622,7 @@ void mouseButton(int button, int state, int x, int y) {
 			xOrigin = -1;
 			yOrigin=-1;
 		}
-		else  {// state = GLUT_DOWN
+		else  {
 			buttonn=-1;
 			xOrigin = x;
 			yOrigin= y;
@@ -751,6 +630,19 @@ void mouseButton(int button, int state, int x, int y) {
 	}
 }
 
+void change_force(float *F, float *Fo, unsigned int node_count, unsigned int fixed_nodes_count, unsigned int node_dimensions, float force, int force_axis)
+{
+
+	// Delcare F in only 1 direction
+	for (int i=0;i<(node_count-fixed_nodes_count)*node_dimensions;i++){
+		if(3-(i%3)==force_axis)
+			F[i]=force;
+		else
+			F[i]=0;
+	}
+	// Copy F to Fo
+	std::copy(F,F+((node_count-fixed_nodes_count)*node_dimensions),Fo);
+}
 
 
 
@@ -759,7 +651,6 @@ int main(int argc, char **argv)
 {
 
 /*#########---------OpenGL Init------------#########*/
-
 
 	// init GLUT and create window
 	glutInit(&argc, argv);
@@ -774,19 +665,10 @@ int main(int argc, char **argv)
 	glutReshapeFunc(ResizeFunction);
 	glutIdleFunc(IdleFunction);
 	glutCloseFunc(Cleanup);
-
-//	glutDisplayFunc(renderScene);
-//	glutReshapeFunc(changeSize);
-//	glutIdleFunc(renderScene);
-
-	// here are the new entries
 	glutKeyboardFunc(processNormalKeys);
 	glutSpecialFunc(processSpecialKeys);
 	glutIgnoreKeyRepeat(1);
 	glutSpecialUpFunc(releaseKey);
-
-
-
 	glutMouseFunc(mouseButton);
 	glutMotionFunc(mouseMove);
 
@@ -801,7 +683,7 @@ int main(int argc, char **argv)
 			stderr,
 			"ERROR: %s\n",
 			glewGetErrorString(GlewInitResult)
-		);
+			);
 		exit(EXIT_FAILURE);
 	}
 	
@@ -809,19 +691,13 @@ int main(int argc, char **argv)
 		stdout,
 		"INFO: OpenGL Version: %s\n",
 		glGetString(GL_VERSION)
-	);
+		);
 
-	//cudaSetDevice(0);
-	//cudaGLSetGLDevice(0);
-
-	//CreateShaders();
-	//CreateVBO_CUDA();
 	glClearColor(0.25f, 0.25f, 0.25f, 0.0f);
+	// glClearColor(1.0f, 1.0f, 1.0f, 0.0f);
 
 
 /*#########---------Ends OpenGL Init------------#########*/
-
-
 
 /*#########---------Starts Getopts code------------#########*/
 
@@ -831,7 +707,7 @@ int main(int argc, char **argv)
 	extern int optind;
 	int c, err = 0; 
 	int nflag=0, kflag=0;
-	string ename,nname,kname,eigenvec_name, fixedname;
+	string ename,nname,kname,eigenvec_name, fixedname, psyname;
 	static char usage[] = "usage: %s -n Node_filename [-k eigen_filename] \n";
 
 	while ((c = getopt(argc, argv, "n:k:")) != -1)
@@ -849,16 +725,19 @@ int main(int argc, char **argv)
 			eigenvec_name.append("_vec.csv");
 			fixedname.append(optarg);
 			fixedname.append("_fixed.csv");
+			psyname.append(optarg);
+			psyname.append("_Psy.csv");
 			break;
-		case 'k':
-			kflag = 1;
-			// Convert to string & append extension
-			kname.append(optarg);
-			kname.append(".csv");
-			break;
-		case '?':
-			err = 1;
-			break;
+
+			// Not used atm
+		// case 'k':
+		// 	kflag = 1;
+		// 	kname.append(optarg);
+		// 	kname.append(".csv");
+		// 	break;
+		// case '?':
+		// 	err = 1;
+		// 	break;
 		}
 	if (nflag == 0) 
 	{	/* -n (Node_filename is mandatory */
@@ -866,12 +745,14 @@ int main(int argc, char **argv)
 		fprintf(stderr, usage, argv[0]);
 		exit(1);
 	} 
-	else if (kflag==0)
-	  {
-		  // TODO fix nmname to get rid of extension
-		  //	kname=nname;
-//		kname.append(".csv");
-	  }
+
+	// Not used atm
+	// else if (kflag==0)
+	// {
+	// 	// TODO fix nmname to get rid of extension
+	// 	//	kname=nname;
+	// }
+
 	else if ((optind+1-1) > argc) 
 	{	
 		/* More arguments ? */
@@ -889,14 +770,10 @@ int main(int argc, char **argv)
 	/* Print Values */
 	cout<<"NodeFile:"<<nname<<"\n";
 	cout<<"ElemFile:"<<ename<<"\n";
-
-	// Test Printf on C++ string
+	// Testing printf
     printf("EigenFile:%s\n", kname.c_str());
-
 	cout<<"EigenVecsFile:"<<eigenvec_name<<"\n";
 
-
-	
 	if (optind < argc)
 	{	/* Last arguments */
 		for (; optind < argc; optind++)
@@ -905,11 +782,7 @@ int main(int argc, char **argv)
 //		printf("no arguments left to process\n");
 	}
 
-/* End of Getopts  */
-
 /*#########---------End of Getopts------------#########*/
-
-
 
 /*#########---------File Loading------------#########*/
 
@@ -917,18 +790,15 @@ int main(int argc, char **argv)
 /* Open Files  */
 
 	// Node File
-ifstream node_file(nname.c_str());
-string line;
+	ifstream node_file(nname.c_str());
+	string line;
 	
 	int line_count=0;
 	int node_start=0;
 
-	//int node_count;
-//	int node_dimensions;
-	//float **nodes;
 	while(std::getline(node_file,line))
 	{
-// Get rid of carriage return
+        // Get rid of carriage return
 		if(line[line.length()-1]=='\r')
 			line[line.length()-1]='\0';
 		std::stringstream  lineStream(line);
@@ -938,36 +808,23 @@ string line;
         {
 			if(cell.length()>0)
 			{
-				//cout<<val_count;
-				// std::stringstream trimmer;
-				// trimmer << cell;
-				// cell.clear();
-				// trimmer >> cell;
 				if(line_count==0)
 				{
 					if(val_count==0)
 						// Get Number of Nodes
 						node_count=atoi(cell.c_str());
 					else if(val_count==1){
-						//cout<<cell;
 						//Get Number of Dimensions
 						node_dimensions=atoi(cell.c_str());
-						
-						// Allocate multi-dimensional array
-//						**nodes = (float **) malloc(node_count*sizeof(float*));
-
 						nodes=new float[node_count*node_dimensions];
-						// nodes=new float*[node_count];
-						// for(int i=0; i<node_count; i++)
-						// {
-						// 	nodes[i] = new GLfloat[node_dimensions];
-						// }
+						nodes_orig=new float[node_count*node_dimensions];
 
 					}
+
 				}
 				else
 				{
-			
+					// Check speed of conversion
 					char* p;
 					float converted = strtof(cell.c_str(), &p);
 					if (*p) 
@@ -976,40 +833,25 @@ string line;
 					}
 					else 
 					{
-
 						if(line_count==1 & val_count==0)
 							node_start=converted;
 						if(val_count>0)
-						{
-							// if(val_count==3)
-							// 	converted*=8;
 							nodes[node_dimensions*(line_count-1)+(val_count-1)]=converted;
-							// nodes[line_count-1][val_count-1]=converted;
-							//cout<<nodes[line_count-1][val_count-1]<<",";
-						// use converted
-						//	cout << converted<<line_count<<"\n";// You have a cell!!!!
-						}
 					}
 				}
 				val_count++;
 			}
 		}
-		//cout<<"\n";
 		line_count++;
 	}
 
 
-// Elements File
-	ifstream elem_file(ename.c_str());
-	//string line;
-	
+    // Elements File
+	ifstream elem_file(ename.c_str());	
 	line_count=0;
-	//int elem_count;
-	//int elem_nodes;
-	//int **elem;
 	while(std::getline(elem_file,line))
 	{
-// Get rid of carriage return
+        // Get rid of carriage return
 		if(line[line.length()-1]=='\r')
 			line[line.length()-1]='\0';
 		std::stringstream  lineStream(line);
@@ -1019,11 +861,6 @@ string line;
         {
 			if(cell.length()>0)
 			{
-				//cout<<val_count;
-				// std::stringstream trimmer;
-				// trimmer << cell;
-				// cell.clear();
-				// trimmer >> cell;
 				if(line_count==0)
 				{
 					if(val_count==0)
@@ -1032,23 +869,14 @@ string line;
 					else if(val_count==1){
 						//Get Number of Element Nodes
 						elem_nodes=atoi(cell.c_str());
-						
-						// Allocate multi-dimensional array
+						// Allocate array
 						elem=new GLshort[elem_count*elem_nodes];
-						// elem=new GLint*[elem_count];
-						// for(int i=0; i<elem_count; i++)
-						// {
-						// 	elem[i] = new GLint[elem_nodes];
-						// }
-
 					}
 				}
 				else
 				{
-			
 					char* p;
-					GLshort converted = strtol(cell.c_str(), &p,10);
-					//unsigned short converted = (unsigned short) strtoul(cell.c_str(), NULL, 0);
+					GLshort converted = strtol(cell.c_str(), &p,10); // Add base 10
 					if (*p) 
 					{
 						// conversion failed because the input wasn't a number
@@ -1058,208 +886,92 @@ string line;
 						if(val_count>0)
 						{
 							elem[elem_nodes*(line_count-1)+(val_count-1)]=converted-node_start;
-							// elem[line_count-1][val_count-1]=converted; 
-							//cout<<elem[line_count-1][val_count-1]<<",";
-						// use converted
-							//cout << converted<<"\n";// You have a cell!!!!
 						}
 					}
 				}
 				val_count++;
 			}
 		}
-		//cout<<"\n";
 		line_count++;
 	}
 
 	// EigenFile
 
 	// No need for columns in EIGENVALUES
-// Getfile handle
+    // Get file handle
 	std::ifstream csv_file_rows(kname.c_str());
 	std::ifstream csv_file(kname.c_str());
 	unsigned int row_count=0;
 	unsigned int tot_rowCount;
-	//std::string line;	
 
-// Read whole file to get row and count
-	 while (std::getline(csv_file_rows,line)){
-	// 	if(row_count==1){
-	// 		std::stringstream lineStream(line);
-	// 		std::string colVal;
-	// 		while(std::getline(lineStream,colVal,',')){
-	// 			col_count++;
-	// 		}
-	// 	}
-
+    // Read whole file to get row and count - Don't like it but its only done once
+	while (std::getline(csv_file_rows,line)){
 		row_count++;
-		//	std::cout<<line<<"\t";
-//		std::cout<<row_count<<"\n";
 	}
 
-
-	// Print debug values
 	tot_rowCount=row_count;
-//	tot_colCount=col_count;
 
-	// std::cout<<tot_colCount<<"\n";
-
-	// Allocate arrays
+	// Allocate array
 	eigenVals=new float[tot_rowCount];
-	// eigenVals=new float[tot_rowCount*tot_colCount];
 
 	row_count=0;				// reset value
 
 	// Read file to initialize array
 	while (std::getline(csv_file,line)){
-    // Get rid of carriage return
+		// Get rid of carriage return
 		if(line[line.length()-1]=='\r')
 			line[line.length()-1]='\0';
 		std::stringstream lineStream(line);
 		std::string colVal;
 		
-		// Reset col value
-		//col_count=0;
-
-		// Separate values by ','
+		// Separate values by ',' (CSV)
 		while(std::getline(lineStream,colVal,',')){
 			if(colVal.length()>0){ // Could assert also
+
 				// Convert char* to float
 				char *p;
 				float converted = strtof(colVal.c_str(),&p);
 				if (*p){}
 				else{
 					eigenVals[row_count]=converted;
-					//std::cout<<eigenVals[row_count]<<"\n";
-					// eigenVals[(tot_colCount*row_count)+col_count]=converted;
-					// Print it to check if its correct
-					// std::cout<<(tot_colCount*row_count)+col_count<<"\t"<<converted<<"\n";
-					// std::cout<<eigenVals[(tot_colCount*row_count)+col_count]<<"\t"<<converted<<"\n";
 				}
 			}
-			//	col_count++;
-		}
-		row_count++;
-	}
-
-// EigenVectorsFile
-// Getfile handle
-
-	std::ifstream eigenvec_file_rows(eigenvec_name.c_str());
-	std::ifstream eigenvec_file(eigenvec_name.c_str());
-
-	// Columns should be same as eigenVals count
-	// Rows should be the same as nodes x dimensions
-	unsigned int col_countEvec=0;
-	unsigned int tot_colCountEvec;
-
-	//std::string line;	
-
-// Read whole file to get row and count
-	// while (std::getline(eigenvec_file_rows,line)){
-	// 	if(col_countEvec==0){
-	// 		std::stringstream lineStream(line);
-	// 		std::string colVal;
-	// 		while(std::getline(lineStream,colVal,',')){
-	// 			col_countEvec++;
-	// 		}
-	// 	}
-	// }
-	
-// Print debug values
-	// Columns same as EigenVals count
-	tot_colCountEvec=tot_rowCount;
-
-
-
-	// Allocate arrays
-	eigenVecs=new float[node_count*node_dimensions*tot_colCountEvec];
-
-	row_count=0;				// reset value
-
-	// Read file to initialize array
-	while (std::getline(eigenvec_file,line)){
-    // Get rid of carriage return
-		if(line[line.length()-1]=='\r')
-			line[line.length()-1]='\0';
-		std::stringstream lineStream(line);
-		std::string colVal;
-		
-		// Reset col value
-		col_countEvec=0;
-
-		// Separate values by ','
-		while(std::getline(lineStream,colVal,',')){
-			if(colVal.length()>0){ // Could assert also
-				// Convert char* to float
-				char *p;
-				float converted = strtof(colVal.c_str(),&p);
-				if (*p){}
-				else{
-					eigenVecs[(tot_colCountEvec*row_count)+col_countEvec]=converted;
-					// Print it to check if its correct
-					//std::cout<<eigenVecs[(node_count*node_dimensions*row_count)+col_countEvec]<<",";
-					//std::cout<<eigenVals[(tot_colCountEvec*row_count)+col_countEvec]<<"\n";
-					//std::cout<<(tot_colCountEvec*row_count)+col_countEvec<<"\n";
-				}
-			}
-			col_countEvec++;
 		}
 		row_count++;
 	}
 
 
+    // Fixed Nodes
 
-// Fixed Nodes
-
-
-	// No need for columns in Fixed Nodes
-// Getfile handle
+	// No need for columns in Fixed Nodes either
+    // Get file handle
 	std::ifstream fixed_nodes_rows(fixedname.c_str());
 	std::ifstream fixed_nodes_file(fixedname.c_str());
-    row_count=0;
-	//std::string line;	
 
-// Read whole file to get row and count
-	 while (std::getline(fixed_nodes_rows,line)){
-	// 	if(row_count==1){
-	// 		std::stringstream lineStream(line);
-	// 		std::string colVal;
-	// 		while(std::getline(lineStream,colVal,',')){
-	// 			col_count++;
-	// 		}
-	// 	}
+    row_count=0;				// Reset
 
+    // Read whole file to get row and count
+	while (std::getline(fixed_nodes_rows,line)){
 		row_count++;
-		//	std::cout<<line<<"\t";
-//		std::cout<<row_count<<"\n";
 	}
 
-
-	// Print debug values
 	fixed_nodes_count=row_count;
-//	tot_colCount=col_count;
 
-	// std::cout<<tot_colCount<<"\n";
-
-	// Allocate arrays
+	// Allocate array
 	fixed_nodes=new int[fixed_nodes_count];
-	// eigenVals=new float[tot_rowCount*tot_colCount];
 
 	row_count=0;				// reset value
 
 	// Read file to initialize array
 	while (std::getline(fixed_nodes_file,line)){
-    // Get rid of carriage return
+
+		// Get rid of carriage return
 		if(line[line.length()-1]=='\r')
 			line[line.length()-1]='\0';
 		std::stringstream lineStream(line);
 		std::string colVal;
-		
-		// Reset col value
-		//col_count=0;
 
-		// Separate values by ','
+		// Separate values by ',' (CSV)
 		while(std::getline(lineStream,colVal,',')){
 			if(colVal.length()>0){ // Could assert also
 				// Convert char* to float
@@ -1268,29 +980,112 @@ string line;
 				if (*p){}
 				else{
 					fixed_nodes[row_count]=converted-1;
-					//std::cout<<eigenVals[row_count]<<"\n";
-					// eigenVals[(tot_colCount*row_count)+col_count]=converted;
-					// Print it to check if its correct
-					// std::cout<<(tot_colCount*row_count)+col_count<<"\t"<<converted<<"\n";
-					// std::cout<<eigenVals[(tot_colCount*row_count)+col_count]<<"\t"<<converted<<"\n";
 				}
 			}
-			//	col_count++;
+		}
+		row_count++;
+	}
+
+    // EigenVectorsFile
+
+    // Get file handle
+
+	std::ifstream eigenvec_file_rows(eigenvec_name.c_str());
+	std::ifstream eigenvec_file(eigenvec_name.c_str());
+
+	// Columns should be same as eigenVals count
+	// Rows should be the same as nodes x dimensions
+	unsigned int col_countEvec=0;
+	unsigned int tot_colCountEvec;
+	
+	// Columns same as EigenVals count
+	tot_colCountEvec=tot_rowCount;
+
+	// Allocate array
+	eigenVecs=new float[(node_count-fixed_nodes_count)*node_dimensions*tot_colCountEvec];
+
+	row_count=0;				// reset value
+
+	// Read file to initialize array
+	while (std::getline(eigenvec_file,line)){
+
+		// Get rid of carriage return
+		if(line[line.length()-1]=='\r')
+			line[line.length()-1]='\0';
+		std::stringstream lineStream(line);
+		std::string colVal;
+		
+		// Reset col value
+		col_countEvec=0;
+
+		// Separate values by ',' (CSV)
+		while(std::getline(lineStream,colVal,',')){
+			if(colVal.length()>0){ // Could assert also
+				// Convert char* to float
+				char *p;
+				float converted = strtof(colVal.c_str(),&p);
+				if (*p){}
+				else{
+					eigenVecs[(tot_colCountEvec*row_count)+col_countEvec]=converted;
+				}
+			}
+			col_countEvec++;
+		}
+		row_count++;
+	}
+
+	// Psy
+    // Get file handle
+
+	std::ifstream psy_file(psyname.c_str());
+
+	// Columns should be same as eigenVals count
+	// Rows should be the same as nodes x dimensions
+    col_countEvec=0;			// Reuse from EigenVecs	
+
+
+	// Allocate array
+	Psy=new float[(node_count-fixed_nodes_count)*node_dimensions*tot_colCountEvec];
+
+	row_count=0;				// reset value
+
+	// Read file to initialize array
+	while (std::getline(psy_file,line)){
+
+		// Get rid of carriage return
+		if(line[line.length()-1]=='\r')
+			line[line.length()-1]='\0';
+		std::stringstream lineStream(line);
+		std::string colVal;
+		
+		// Reset col value
+		col_countEvec=0;
+
+		// Separate values by ',' (CSV)
+		while(std::getline(lineStream,colVal,',')){
+			if(colVal.length()>0){ // Could assert also
+				// Convert char* to float
+				char *p;
+				float converted = strtof(colVal.c_str(),&p);
+				if (*p){}
+				else{
+					Psy[(tot_colCountEvec*row_count)+col_countEvec]=converted;
+				}
+			}
+			col_countEvec++;
 		}
 		row_count++;
 	}
 
 
-
 /*#########---------Ends File Loading---------------#########*/
-
 
 
 /*#########---------Allocate coefficient matrices---------------#########*/
 
 	// D, alpha, beta, gamma square matrices eigencount x eigencount
 
-	// Declare h
+	// Timestep
 	h=0.03;
 
 	d = new float[tot_rowCount*tot_rowCount];
@@ -1298,7 +1093,6 @@ string line;
 	beta = new float[tot_rowCount*tot_rowCount];
 	gama = new float[tot_rowCount*tot_rowCount];
 	M =  new float[tot_rowCount*tot_rowCount];
-	// C can be a vector constants: M*0.01+K*0.001
 	C =  new float[tot_rowCount];
 
 	// Create alpha-identity
@@ -1307,7 +1101,7 @@ string line;
 
 	// 2 nested fors to declare square diagonal matrices
 	for(int i=0;i<tot_rowCount;i++){
-		// Maybe only need 1 for ?
+		// Maybe only need 1 for ? - TODO
 		for(int j=0;j<tot_rowCount;j++){
 			int index=i*tot_rowCount+j;
 			// Only declare diagonal elements
@@ -1328,7 +1122,6 @@ string line;
 				gama[index]=0;
 				alphaI[index]=0;
 			}
-			//std::cout<<gama[i*tot_rowCount+j]<<",";
 		}
 	}
 
@@ -1336,14 +1129,10 @@ string line;
 /*#########---------Ends Coefficients allocation---------------#########*/
 
 
-
-
-
 /*#########---------Allocate calculation vectors---------------#########*/
 
-
-// Allocate vectors
-// F and u node dimensioned all others EigenVals dimensioned
+    // Allocate vectors
+    // F and u node dimensioned all others EigenVals dimensioned
 	F = new float[(node_count-fixed_nodes_count)*node_dimensions];
 	Fo = new float[(node_count-fixed_nodes_count)*node_dimensions];
 	q = new float[tot_rowCount];
@@ -1354,24 +1143,8 @@ string line;
 	R = new float[node_count*node_dimensions*node_count*node_dimensions];
 	Ro = new float[node_count*node_dimensions*node_count*node_dimensions];
 
-
-
-	// Some force constant
-	const float force=0.04;
-	// Delcare F in only 1 direction
-	for (int i=0;i<(node_count-fixed_nodes_count)*node_dimensions;i++){
-		if(3-(i%3)==1)
-			F[i]=force;
-		else
-			F[i]=0;
-		// F[i]=force;
-		u[i]=0;
-		//	std::cout<<F[i]<<",";
-	}
-
-	// Copy F to Fo
-	std::copy(F,F+((node_count-fixed_nodes_count)*node_dimensions),Fo);
-
+	change_force(F, Fo, node_count, fixed_nodes_count, node_dimensions, force, force_axis);
+	
 	// For loop to initialize all other vectors (all 0's)
 	for (int i=0;i<tot_rowCount;i++){
 		q[i]=0;
@@ -1381,29 +1154,17 @@ string line;
 	}
 
 
-
-
 /*#########---------Ends calculation vectors allocation---------------#########*/
 
-
-
-
-	CreateVBO_CUDA();
-	//CreateShaders();
-	
-	// No sure I should call this here, is it necessary?
-    // run the device part of the program
-//    bTestResult = runTest(argc, (const char **)argv, nodes, node_count,1.0);
-
-/*
-	for (int ii=0;ii<node_count*3;ii++)
-	{
-		cout<<nodes[ii]<<"\n";
-	}
-*/
+	if(parallel==true)
+		CreateVBO_CUDA();
+	else
+		CreateVBO();
+	CreateShaders();
 
 	eigencount=tot_rowCount;
 
+	// Print some info
 	cout<<"Nodes: "<<node_count<<"\t";
 	cout<<"Dimensions: "<<node_dimensions<<"\n";
 	cout<<"Elements: "<<elem_count<<"\t";
@@ -1411,22 +1172,24 @@ string line;
 	std::cout<<"# Eigenvalues: "<<tot_rowCount<<"\n";
 	std::cout<<"Eigenvectors matrix dimensions:"<<node_count*node_dimensions<<"x"<<tot_rowCount<<"\n";
 
-//	int abc=1;
-//	bool a = runTest2(0, (const char **)"", abc);
 
-	allocate_GPUnodes(d_nodes, nodes, node_count, node_dimensions);
-	
+	std::copy(nodes,nodes+node_count*node_dimensions,nodes_orig);
 
+	// Allocate GPU globals before main loop instead of doing it every time
+	allocate_GPUnodes( nodes, node_count, node_dimensions);
+
+
+	fps_start = glutGet(GLUT_ELAPSED_TIME);
 
 	glutMainLoop();
 
-	free_GPUnodes(d_nodes);
+
+	free_GPUnodes(d_nodes);		// TODO - pass device globals
 
 	cudaDeviceReset();
 
 
-
-/*#########---------Free Memory---------------#########*/
+/*#########---------Free System Memory---------------#########*/
 
 
 	free(nodes);
@@ -1447,13 +1210,10 @@ string line;
 	free(qd);
 	free(qdo);
 	free(u);
-
-
+	free(nodes_orig);
 
 /*#########---------Free Memory---------------#########*/
 
-
 	return 1;
-    //exit(bTestResult ? EXIT_SUCCESS : EXIT_FAILURE);
 
 }

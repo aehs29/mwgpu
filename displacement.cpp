@@ -44,7 +44,23 @@ void vectorbyScalar(float *A, const float scalar, int numElements){
 		A[i]=A[i]*scalar;
 }
 
-void displacement_serial(float *q, float *qo, float *qd, float *qdo, float *F, float *Fo, float *R, float *Ro, float *alpha, float *alphaI, float *beta, float *gama, float *Phi, float *u, float h, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions){
+void insertZeros(float *vec, int *positions , unsigned int fixed_nodes_count, unsigned int numElements){
+	int i,j,k;
+	numElements=numElements*3;
+	for (i=0;i<fixed_nodes_count;i++){
+		for (k=0;k<3;k++){
+			for (j=numElements-1;j>positions[i]*3;j--){
+				vec[j]=vec[j-1];
+			}
+			//for (k=0;k<3;k++)
+			vec[(positions[i]*3)+k]=0;
+		}
+	}
+
+}
+
+
+void displacement_serial(float *q, float *qo, float *qd, float *qdo, float *F, float *Fo, float *R, float *Ro, float *alpha, float *alphaI, float *beta, float *gama, float *Phi, float *u, float h, unsigned int eigencount, unsigned int nodes_not_fixed, unsigned int node_dimensions, unsigned int nodes_original, int *fixed_nodes, float *nodes, float *nodes_orig){
 
 /*
 
@@ -69,7 +85,8 @@ Phi:  (node_count x node_dimensions) x eigencount
 
 
 	// Mem Sizes
-	unsigned int size_nodes = node_count* node_dimensions;
+	unsigned int size_nodes_orig = nodes_original*node_dimensions;
+	unsigned int size_nodes = nodes_not_fixed * node_dimensions;
 	unsigned int size_eigen = eigencount;
 	unsigned int mem_size_q = sizeof(float) * size_eigen;
 	unsigned int mem_size_Phi = sizeof(float) * (size_nodes*size_eigen);
@@ -111,6 +128,7 @@ Phi:  (node_count x node_dimensions) x eigencount
 
 	// Fourth part
 	// u5=gama*u4
+	// ERROR
 	matrixByVec(gama, u4, u5, size_eigen, size_eigen);
 
 	// Fifth part
@@ -136,6 +154,10 @@ Phi:  (node_count x node_dimensions) x eigencount
 	// u=Phi*q
 	matrixByVec(Phi,q,u,size_nodes,eigencount);
 
+	// Add Zeros
+	insertZeros(u, fixed_nodes , nodes_original-nodes_not_fixed, nodes_original);
+	// Add u
+	vectorAdd(u, nodes_orig, nodes, size_nodes_orig);
 	// Free Memory
 	free(u1);
 	free(u2);

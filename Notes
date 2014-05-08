@@ -1,51 +1,39 @@
-#####################
-OpenGL on CUDA v 1.0
+1.- Check faces
+2.- modify K and M
+3.- calculate Phi
+4.- u only contains subset
 
-- Zoom is performed by scaling node locations by some factor
-- OpenGL is using a VBO
-- Calculations are done on the GPU
-- CUDA calculations are applied directly to the VBO avoiding memory transfer
-- Thread/Block/Grid are computed "optimally" 
+Fixed on Y *Index's are on Matlab (start at 1)
+81,82,83,84, 125, 126, 167, 168, 209, 210, 231, 252, 293, 294, 315, 336
 
-#####################
+To apply this on C code:
+NOPE - save modified versions of K and M on csv files
+NOPE - Load new K and M (sizes HAVE changed)
+- PhiSize will change
+ - PhiSize should be (node_count*node_dimensions)-(FixedNodes_count*node_dimensions) x eigencount
+ - R & F size = 1 x (node_count*node_dimensions)-(FixedNodes_count*node_dimensions)
 
+u sizes that changed: u3 (PhiSized), u (maybe)
 
-#######################
-CUDA Displacement v 1.1
+-- Final u should be the same size (node sized)
 
-- Loading values of modified K and M Matrices and fixed_nodes indices
-- Only one function to calculate and render
-- Render using original nodes and not incrementally (WORKS!!!)
-- Zoom stopped working due above
-- Change colors of object
-- Still have to check DrawElements to see if size is correct
+Create d_u larger to check the next step
+-- Check if u=Phi*q is affected by change of sizes, if it is create another variable and then use final u when 0's are inserted
 
 
-#######################
-
-#######################
-CUDA Displacement v 1.2
-
-- Added GLM Library
-- New Rotation Method
-- Perspective now works correctly
-- Added "Dragging" functionality
-- Shaders now work correctly
-
-TODO:
-OpenGL
-- Click to fix face functionality?***
-
-CUDA:
-- Build R matrix?
-- Include R matrix in computation
-- Add Eigenvectors computation***
-
-########################
+Create Method to insert 0's on desired locations HAS TO BE IN PARALLEL!
 
 
 
 
+- Load W (take columns and rows)
+ Trident = W*Phi
+ w = Trident*q
+ w is missing zeros
+
+ integrate w to get R
+
+CHECK Phi dimensions when allocating
 
 
 
