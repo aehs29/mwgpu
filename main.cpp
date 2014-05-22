@@ -112,6 +112,9 @@ int CurrentWidth = 800,
 // Parallel or Serial
 bool parallel=false;
 
+// Render only Lines
+bool onlyNodes=false;
+
 // Performance measurement
 static unsigned int fps_start = 0;
 static unsigned int fps_frames = 0;
@@ -122,8 +125,11 @@ int tpf;
 size_t BufferSize,VertexSize;
 GLuint
     VertexShaderId,
+    VertexShaderId2,
 	FragmentShaderId,
+	FragmentShaderLinesId,
 	ProgramId,
+	ProgramId2,
 	VaoId,
 	BufferId,
 	IndexBufferId[2],
@@ -156,6 +162,34 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 extern "C" void* allocate_GPUnodes(float *nodes, unsigned int node_count, unsigned int node_dimensions);
 extern "C" bool free_GPUnodes(float *d_nodes);
 
+void GLM_MVP(GLuint pId){
+// GLM Matrices
+	glm::vec3 axis_y(0, 1, 0);
+	glm::vec3 axis_x(1, 0, 0);
+	glm::mat4 anim = glm::rotate(glm::mat4(1.0f), angle, axis_y);
+	glm::mat4 animy = glm::rotate(glm::mat4(1.0f), angleX, axis_x);
+
+	// Push object so its not close to the camera
+	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, zoom));
+
+//	glm::mat4 modelcenter = glm::translate(glm::mat4(1.0f), glm::vec3(0.4, 10.0, 0.0));
+
+	// Lookat(eye,center,up) = position of cam, camera pointed to, top of the camera (tilted)
+	glm::mat4 view = glm::lookAt(glm::vec3(0.0, 0.0, 0.0), glm::vec3(posX, posY, -5.0), glm::vec3(0.0, 1.0, 0.0));
+	// Perspective
+	glm::mat4 projection = glm::perspective(45.0f, 1.0f*CurrentWidth/CurrentHeight, 0.1f, 100.0f);
+
+	// Calculate result
+	glm::mat4 mvp = projection * view * model * anim * animy;
+
+	glUseProgram(pId);
+	// glUseProgram(ProgramId2);
+	glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
+
+	glutPostRedisplay();
+
+
+}
 
 
 void ResizeFunction(int Width, int Height)
@@ -205,7 +239,7 @@ void IdleFunction(void)
 		break;
 
 	}
-	int n=sprintf(buffer,"TPF:%d, Force=%0.3f, Axis:%c, Render:%d",tpf,force,axis,render);
+	int n=sprintf(buffer,"TPF:%d, Force=%0.3f, Axis:%c, Render:%d, Parallel:%d",tpf,force,axis,render,parallel);
 	glutSetWindowTitle(buffer);
 
 	// Dragging and Rotating
@@ -214,29 +248,7 @@ void IdleFunction(void)
 	angle+=deltaAngle;
 	angleX+=deltaAngleX;
 
-
-	// GLM Matrices
-	glm::vec3 axis_y(0, 1, 0);
-	glm::vec3 axis_x(1, 0, 0);
-	glm::mat4 anim = glm::rotate(glm::mat4(1.0f), angle, axis_y);
-	glm::mat4 animy = glm::rotate(glm::mat4(1.0f), angleX, axis_x);
-
-	// Push object so its not close to the camera
-	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, zoom));
-
-//	glm::mat4 modelcenter = glm::translate(glm::mat4(1.0f), glm::vec3(0.4, 10.0, 0.0));
-
-	// Lookat(eye,center,up) = position of cam, camera pointed to, top of the camera (tilted)
-	glm::mat4 view = glm::lookAt(glm::vec3(0.0, 0.0, 0.0), glm::vec3(posX, posY, -5.0), glm::vec3(0.0, 1.0, 0.0));
-	// Perspective
-	glm::mat4 projection = glm::perspective(45.0f, 1.0f*CurrentWidth/CurrentHeight, 0.1f, 100.0f);
-
-	// Calculate result
-	glm::mat4 mvp = projection * view * model * anim * animy;
-
-	glUseProgram(ProgramId);
-	glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
-	glutPostRedisplay();
+	
 }
 
 void RenderFunction(void)
@@ -262,7 +274,7 @@ void RenderFunction(void)
 		else{
     /*Serial Code*/
 
-			displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, node_count-fixed_nodes_count, node_dimensions, node_count, fixed_nodes, nodes, nodes_orig);
+			displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, node_count-fixed_nodes_count, node_dimensions, node_count, fixed_nodes, nodes, Psy, nodes_orig);
 		
 			glBindBuffer(GL_ARRAY_BUFFER, BufferId);
 			glBufferSubData(GL_ARRAY_BUFFER,0, BufferSize, nodes);   
@@ -274,25 +286,39 @@ void RenderFunction(void)
 		// Copy Old values
 		std::copy(qd,qd+eigencount,qdo);
 		std::copy(q,q+eigencount,qo);
-//	std::copy(R,R+tot_rowCount,Ro);
+		// std::copy(R,R+tot_rowCount,Ro);
 		std::copy(F,F+((node_count-fixed_nodes_count)*node_dimensions),Fo);
 	}
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-
-
-	// OpenGL Render
+	// ProgramId= glCreateProgram();
+	// glAttachShader(ProgramId, VertexShaderId);
+	// glAttachShader(ProgramId, FragmentShaderId);
+	// OpenGL Rende
 
 	// Old Coloring
     // glColor3f(red,green,blue);
     // glDrawElements(GL_QUAD_STRIP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
-	glDrawElements(GL_TRIANGLE_STRIP, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
+	if(onlyNodes==false){
+			GLM_MVP(ProgramId);
+		// glLinkProgram(ProgramId);
+		glDrawElements(GL_TRIANGLES, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
+	}
+
+	// glAttachShader(ProgramId, FragmentShaderLinesId);
+	// glLinkProgram(ProgramId);
     //glDrawElements(GL_TRIANGLE_STRIP, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
 
 	// glColor3f(1.0f,1.0f,1.0f);
     //glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
+	//glDrawElements(GL_POINTS, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
+	// glDetachShader(ProgramId, FragmentShaderId);
+	// glAttachShader(ProgramId, FragmentShaderLinesId);
+	// glLinkProgram(ProgramId);
+	GLM_MVP(ProgramId2);
 	glDrawElements(GL_LINES, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
+
     //glDrawElements(GL_LINES, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
     
 	glutSwapBuffers();
@@ -421,7 +447,15 @@ void DestroyVBO(void)
 		 exit(-1);
 	 if ((FragmentShaderId = create_shader("mwgpu.f.glsl", GL_FRAGMENT_SHADER)) == 0)
 		 exit(-1);
+	 if ((VertexShaderId2 = create_shader("mwgpu.v.glsl", GL_VERTEX_SHADER)) == 0)
+		 exit(-1);
+	 if ((FragmentShaderLinesId = create_shader("mwgpu.fl.glsl", GL_FRAGMENT_SHADER)) == 0)
+		 exit(-1);
 
+	 ProgramId2= glCreateProgram();
+	 glAttachShader(ProgramId2, VertexShaderId2);
+	 glAttachShader(ProgramId2, FragmentShaderLinesId);
+	 glLinkProgram(ProgramId2);
 
 	 ProgramId= glCreateProgram();
 	 glAttachShader(ProgramId, VertexShaderId);
@@ -474,11 +508,15 @@ void DestroyShaders(void)
 
 	glDetachShader(ProgramId, VertexShaderId);
 	glDetachShader(ProgramId, FragmentShaderId);
+	glDetachShader(ProgramId2, VertexShaderId);
+	glDetachShader(ProgramId2, FragmentShaderLinesId);
 
 	glDeleteShader(FragmentShaderId);
 	glDeleteShader(VertexShaderId);
+	glDeleteShader(FragmentShaderLinesId);;
 
 	glDeleteProgram(ProgramId);
+	glDeleteProgram(ProgramId2);
 
 	ErrorCheckValue = glGetError();
 	if (ErrorCheckValue != GL_NO_ERROR)
@@ -502,6 +540,12 @@ void processNormalKeys(unsigned char key, int x, int y) {
 			render=false;
 		else
 			render=true;
+	}
+	if (key==8){				// Space
+		if(onlyNodes==true)
+			onlyNodes=false;
+		else
+			onlyNodes=true;
 	}
 }
 
@@ -1211,6 +1255,7 @@ int main(int argc, char **argv)
 	free(qdo);
 	free(u);
 	free(nodes_orig);
+	free(Psy);
 
 /*#########---------Free Memory---------------#########*/
 

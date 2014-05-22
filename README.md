@@ -45,6 +45,16 @@ Modal Warping on GPU v 1.2
 
 #######################
 
+#######################
+Modal Warping on GPU v 1.3.1
+- R computation works serially
+- Multiple Fragment Shaders
+- Changed primitive types (Draw)
+- Started working on R in parallel
+
+
+#######################
+
 TODO:
 OpenGL:
 - Render Info Text
@@ -57,6 +67,7 @@ CUDA:
 - Add Eigenvectors computation***
 - R in parallel:
 	each thread computes skew matrix for every node
+-Cleanup Again
 
 
 C++:
@@ -64,11 +75,5 @@ C++:
 - Make it modular (File_Loading.h, etc)
 
 ########################
-
-
-
-
-
-
 
 

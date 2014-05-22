@@ -35,6 +35,115 @@ __global__ void kInsertZeros(float *Input, float *Output, unsigned int position,
 	}
 }
 
+__global__ void kComputeR(float *d_w, float *d_uc, float *d_u , unsigned int numElements) {
+
+	int i = blockDim.x * blockIdx.x + threadIdx.x;
+   
+	// Every thread does it for x y and z
+	if(i>numElements)
+		return;
+
+	const int size=3;
+	int rI=i*3;					// Real Index on w
+	float norm,b,c;
+	int j,k,l;
+	float skew_w[size*size];
+	float skew_w2[size*size];
+	float R[size*size];
+
+	// Check if its better to declare identity outside
+	int Identity[size*size];
+	for (j=0;j<size*size;j++){
+		if(j==0 || j==4 || j==8)
+			Identity[j]=1;
+		else
+			Identity[j]=0;
+	}
+	
+	float sum=0;
+	// Compute Norm
+	for(j=0;j<size;j++){
+		sum+=d_w[rI+j]*d_w[rI+j];	
+		if(i<3)
+			cuPrintf ("d_w[%d]:%f",rI+j, d_w[rI+j]);	
+	}
+	norm=sqrtf(sum);
+	// if(i<3)
+	// 	cuPrintf ("rI: %d, Norm: %f Sum:%.10f\n", rI,norm,sum);
+
+	// Compute sine and cosine stuff
+	b=cospi(norm/180);
+	c=sinpi(norm/180);
+
+	b=(1-b)/norm;
+	c=(1-c)/norm;
+
+	if(i<3){
+		cuPrintf("norm: %e, cos():%e, sin():%e\n",norm,b,c);
+	}
+	
+
+	// Check indices for skew matrix
+    // Get Skew matrix				  
+	for(j=0;j<size*size;j++){
+		switch(j){
+		case 0:
+			skew_w[j]=0;
+			break;
+		case 1:
+			skew_w[j]=-d_w[rI+2]/norm;
+			break;
+		case 2:
+			skew_w[j]=d_w[rI+1]/norm;
+			break;
+		case 3:
+			skew_w[j]=d_w[rI+2]/norm;
+			break;
+		case 4:
+			skew_w[j]=0;
+			break;
+		case 5:
+			skew_w[j]=-d_w[rI+0]/norm;
+			break;
+		case 6:
+			skew_w[j]=-d_w[rI+1]/norm;
+			break;
+		case 7:
+			skew_w[j]=d_w[rI+0]/norm;
+			break;
+		case 8:
+			skew_w[j]=0;
+			break;
+		}
+	}
+	
+	// Get skew matrix ^2
+	for (j=0;j<size;j++){
+		for (k=0;k<size;k++){
+			sum=0;
+			for(l=0;l<size;l++){
+				sum+=skew_w[j*size+l]*skew_w[l*size+k];
+			}
+			skew_w2[j*size+k]=sum;
+		}
+	}	
+
+	// Get R Matrix
+	for(j=0;j<size*size;j++){
+		R[j]=Identity[j]+skew_w[j]*b+skew_w2[j]*c;
+	}
+
+	// Multiply R by uc and modify u
+	for (j=0;j<size;j++){
+		sum=0;
+		for(k=0;k<size;k++)
+			sum+=R[j*size+k]*d_uc[rI+k];
+		d_u[rI+j]=c;
+	}
+
+}
+
+
 // Based on CUDA sdk example
 template <int BLOCK_SIZE> __global__ void kMatrixMult(float *A, float *B, float *C,int ARows, int ACols, int BRows, int BCols)
 {
@@ -138,6 +247,7 @@ __global__ void kModBuffer(float *buffer, float *d_nodes,  float *u, unsigned in
 	
 }
 
+
 extern "C" void map_Texture(void *cuda_dat, size_t siz,cudaGraphicsResource *resource)
 {
 	size_t size;
@@ -182,6 +292,8 @@ extern "C" bool free_GPUnodes(float *d_nodes){
 
 
 extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float * buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float *d_nodes, float *h_Psy){
+
+    cudaPrintfInit ();
 
 
 /*
@@ -254,7 +366,7 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 
 
 	// Declare used variables on device
-	float *d_alphaI, *d_qo, *d_beta, *d_qdo, *d_Ro, *d_Phi, *d_Fo, *d_gama, *d_alpha, *d_q, *d_qd, *d_w, *d_Psy;
+	float *d_alphaI, *d_qo, *d_beta, *d_qdo, *d_Ro, *d_Phi, *d_Fo, *d_gama, *d_alpha, *d_q, *d_qd, *d_w, *d_wc, *d_Psy;
 
 	// Declare u's on device
 	float *d_u1, *d_u2, *d_u3, *d_u3c, *d_u4, *d_u5, *d_u, *d_uc;
@@ -374,6 +486,12 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 	error = cudaMalloc((void **) &d_w, mem_size_nodes);
 	if (error != cudaSuccess){
         printf("cudaMalloc d_w returned error code %d, line(%d)\n", error, __LINE__);
+        exit(EXIT_FAILURE);
+    }
+
+	error = cudaMalloc((void **) &d_wc, mem_size_nodes);
+	if (error != cudaSuccess){
+        printf("cudaMalloc d_wc returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
 
@@ -759,7 +877,28 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 
 /*#########---------Ends Calculate u---------------#########*/
 
-/*#########---------INsert Zeros---------------#########*/
+/*#########---------Calculate w---------------#########*/
+
+	//   (node_count x node_dimensions) x 1
+	// u=Phi *q
+
+	blocksPerGrid=(size_nodes-size_fixed + threadsPB - 1) / threadsPB;
+
+	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
+	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_Psy, d_q, d_w, size_nodes-size_fixed, eigencount);
+    error = cudaGetLastError();
+    if (error != cudaSuccess)
+    {
+        fprintf(stderr, "Failed to launch MatByVec kernel (u) (error code %s)!\n", cudaGetErrorString(error));
+        exit(EXIT_FAILURE);
+    }
+
+	// remove this
+	// error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
+
+/*#########---------Ends Calculate u---------------#########*/
+
+/*#########---------Insert Zeros---------------#########*/
 
 	blocksPerGrid =(size_nodes + threadsPB - 1) / threadsPB;
 	unsigned int position;
@@ -772,11 +911,15 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 		// Reuse arrays to save memory
 		if(i%2==1){
 			kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_uc, d_u, position, 3, size_nodestomodify+(i+1)*3);
+			kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_wc, d_w, position, 3, size_nodestomodify+(i+1)*3);
+
 			// remove this
 			// error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
 		}
 		else{
 			kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_u, d_uc, position, 3, size_nodestomodify+(i+1)*3);
+			kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_w, d_wc, position, 3, size_nodestomodify+(i+1)*3);
+
 			// remove this
 			// error = cudaMemcpy(h_u, d_uc, mem_size_nodes, cudaMemcpyDeviceToHost);
 		}
@@ -791,10 +934,15 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 	}
 
 
-	// Copy correct array
-	if(i%2==0)
+	// Copy correct array - Now with R calculation included both original and copy must be the same
+	if(i%2==0){
 		error = cudaMemcpy(d_u, d_uc, size_nodes, cudaMemcpyDeviceToDevice);
-
+		error = cudaMemcpy(d_w, d_wc, size_nodes, cudaMemcpyDeviceToDevice);
+	}
+	else{
+		error = cudaMemcpy(d_uc, d_u, size_nodes, cudaMemcpyDeviceToDevice);
+		// error = cudaMemcpy(d_wc, d_w, size_nodes, cudaMemcpyDeviceToDevice);
+	}
 
     if (error != cudaSuccess)
     {
@@ -804,13 +952,40 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 
 	// remove this
 	// error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
+	// error = cudaMemcpy(h_u, d_uc, mem_size_nodes, cudaMemcpyDeviceToHost);
 	// if (error != cudaSuccess)
 	// {
 	// 	fprintf(stderr, "Failed to copy output from device to host (error code %s)!\n", cudaGetErrorString(error));
 	// 	exit(EXIT_FAILURE);
 	// }
 
-/*#########---------INsert Zeros---------------#########*/
+/*#########---------Ends Insert Zeros---------------#########*/
+
+
+/*#########---------Compute R for every node and modify u---------------#########*/
+
+	// Each thread computes skew matrix for every node (x,y,z - 3 elements)
+	blocksPerGrid =(node_count + threadsPB - 1) / threadsPB;
+    error = cudaMemcpy(h_u, d_w, mem_size_nodes, cudaMemcpyDeviceToHost);
+	
+	// for (int g=0;g<9;g++)
+	// 	printf("w[%d]: %f\n",g,h_u[g]);
+
+	
+	kComputeR<<< blocksPerGrid, threadsPerBlock>>>(d_w, d_uc, d_u, node_count); 
+
+	error = cudaGetLastError();
+
+	if (error != cudaSuccess)
+	{
+		fprintf(stderr, "Failed to launch kComputeR kernel (error code %s)!\n", cudaGetErrorString(error));
+		exit(EXIT_FAILURE);
+	}
+
+	error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
+
+
+/*#########---------Ends Compute R---------------#########*/
 
 
 /*#########---------Render on OpenGL---------------#########*/
@@ -884,6 +1059,10 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 	cudaFree(d_Psy);
 	cudaFree(d_w);
 
+
+    // CudaPrintf Stuff
+	cudaPrintfDisplay (stdout, true);
+    cudaPrintfEnd ();
 
 	bool success=true;
 	if(error != cudaSuccess)
