@@ -51,7 +51,16 @@ Modal Warping on GPU v 1.3.1
 - Multiple Fragment Shaders
 - Changed primitive types (Draw)
 - Started working on R in parallel
+- Added only lines feature
 
+#######################
+
+#######################
+Modal Warping on GPU v 1.3.2
+- R computation works in parallel
+- Insert zeros now after computing R
+- Fixed some problem when destroying shaders
+- Added option to run in parallel from terminal
 
 #######################
 
@@ -61,13 +70,10 @@ OpenGL:
 - Click to fix face functionality?***
 
 CUDA:
-- Build R matrix?
-- Include R matrix in computation
 - Declare globals on device for constant arrays
 - Add Eigenvectors computation***
-- R in parallel:
-	each thread computes skew matrix for every node
--Cleanup Again
+- Cleanup Again
+- Improve Performance
 
 
 C++:

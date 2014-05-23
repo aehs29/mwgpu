@@ -141,7 +141,7 @@ void computeR(float *w, unsigned int nodes_original, float *u){
 	int identity[9];
 	float R[size*size];
 
-	for (i=0;i<9;i++){
+	for (i=0;i<size*size;i++){
 		if(i==0 || i==4 || i==8)
 			identity[i]=1;
 		else
@@ -176,6 +176,7 @@ void computeR(float *w, unsigned int nodes_original, float *u){
 			matrixByVec(R,&uc[i*size],&u[i*size],size,size);
 	}
 
+	// Get rid of these
 	 free(skew_w);
 	 free(skew_w2);
 	 free(uc);
@@ -288,17 +289,20 @@ Phi:  (node_count x node_dimensions) x eigencount
 
 
 	// Add Zeros to w
-	insertZeros(w, fixed_nodes , nodes_original-nodes_not_fixed, nodes_original);
+	// insertZeros(w, fixed_nodes , nodes_original-nodes_not_fixed, nodes_original);
 
 
 	// Add Zeros to u
-	insertZeros(u, fixed_nodes , nodes_original-nodes_not_fixed, nodes_original);
+	// insertZeros(u, fixed_nodes , nodes_original-nodes_not_fixed, nodes_original);
 
 	// Compute R
 
 	
 	// Get R matrix
-	computeR(w,nodes_original,u);
+	computeR(w,nodes_not_fixed,u);
+
+	insertZeros(u, fixed_nodes , nodes_original-nodes_not_fixed, nodes_original);
+
 
 	// Add R and u NOT
 //	vectorAdd(u, R, u, size_nodes_orig);

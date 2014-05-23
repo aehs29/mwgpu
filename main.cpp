@@ -110,7 +110,7 @@ int CurrentWidth = 800,
 	WindowHandle = 0;
 
 // Parallel or Serial
-bool parallel=false;
+bool parallel=true;
 
 // Render only Lines
 bool onlyNodes=false;
@@ -508,11 +508,12 @@ void DestroyShaders(void)
 
 	glDetachShader(ProgramId, VertexShaderId);
 	glDetachShader(ProgramId, FragmentShaderId);
-	glDetachShader(ProgramId2, VertexShaderId);
+	glDetachShader(ProgramId2, VertexShaderId2);
 	glDetachShader(ProgramId2, FragmentShaderLinesId);
 
 	glDeleteShader(FragmentShaderId);
 	glDeleteShader(VertexShaderId);
+	glDeleteShader(VertexShaderId2);
 	glDeleteShader(FragmentShaderLinesId);;
 
 	glDeleteProgram(ProgramId);
@@ -754,7 +755,7 @@ int main(int argc, char **argv)
 	string ename,nname,kname,eigenvec_name, fixedname, psyname;
 	static char usage[] = "usage: %s -n Node_filename [-k eigen_filename] \n";
 
-	while ((c = getopt(argc, argv, "n:k:")) != -1)
+	while ((c = getopt(argc, argv, "n:kp:")) != -1)
 		switch (c) {
 		case 'n':
 			nflag = 1;
@@ -782,6 +783,11 @@ int main(int argc, char **argv)
 		// case '?':
 		// 	err = 1;
 		// 	break;
+		case 'p':
+			istringstream(optarg) >> parallel;
+
+			// parallel=optarg;
+			break;
 		}
 	if (nflag == 0) 
 	{	/* -n (Node_filename is mandatory */

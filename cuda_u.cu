@@ -64,23 +64,27 @@ __global__ void kComputeR(float *d_w, float *d_uc, float *d_u , unsigned int num
 	// Compute Norm
 	for(j=0;j<size;j++){
 		sum+=d_w[rI+j]*d_w[rI+j];	
-		if(i<3)
-			cuPrintf ("d_w[%d]:%f",rI+j, d_w[rI+j]);	
+		// if(i<3)
+		// 	cuPrintf ("d_w[%d]:%f",rI+j, d_w[rI+j]);	
 	}
-	norm=sqrtf(sum);
+	if(sum<0.00001)
+		norm=1;
+	else
+		norm=sqrtf(sum);
+
 	// if(i<3)
 	// 	cuPrintf ("rI: %d, Norm: %f Sum:%.10f\n", rI,norm,sum);
 
 	// Compute sine and cosine stuff
-	b=cospi(norm/180);
-	c=sinpi(norm/180);
+	b=cosf(norm);
+	c=sinf(norm);
 
 	b=(1-b)/norm;
-	c=(1-c)/norm;
+	c=1-c/norm;
 
-	if(i<3){
-		cuPrintf("norm: %e, cos():%e, sin():%e\n",norm,b,c);
-	}
+	// if(i<4){
+	// 	cuPrintf("norm: %e, cos():%e, sin():%e\n",norm,b,c);
+	// }
 	
 
 	// Check indices for skew matrix
@@ -116,6 +120,11 @@ __global__ void kComputeR(float *d_w, float *d_uc, float *d_u , unsigned int num
 			break;
 		}
 	}
+
+
+	// if(i<4){
+	// 	cuPrintf("norm: %e, cos():%e, sin():%e\n",norm,b,c);
+	// }
 	
 	// Get skew matrix ^2
 	for (j=0;j<size;j++){
@@ -128,18 +137,23 @@ __global__ void kComputeR(float *d_w, float *d_uc, float *d_u , unsigned int num
 		}
 	}	
 
+
 	// Get R Matrix
 	for(j=0;j<size*size;j++){
 		R[j]=Identity[j]+skew_w[j]*b+skew_w2[j]*c;
 	}
+
 
 	// Multiply R by uc and modify u
 	for (j=0;j<size;j++){
 		sum=0;
 		for(k=0;k<size;k++)
 			sum+=R[j*size+k]*d_uc[rI+k];
-		d_u[rI+j]=c;
+		d_u[rI+j]=sum;
 	}
+	// if(i<3){
+	// 	cuPrintf("u[0]: %e,u[0]: %e,u[0]: %e,\n",d_u[0],d_u[1],d_u[2]);
+	// }
 
 }
 
@@ -896,7 +910,37 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 	// remove this
 	// error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
 
-/*#########---------Ends Calculate u---------------#########*/
+/*#########---------Ends Calculate w---------------#########*/
+
+
+/*#########---------Compute R for every node and modify u---------------#########*/
+
+	error = cudaMemcpy(d_uc, d_u, size_nodestomodify*sizeof(float), cudaMemcpyDeviceToDevice);
+
+	// Each thread computes skew matrix for every node (x,y,z - 3 elements)
+	blocksPerGrid =(node_count-fixed_nodes_count + threadsPB - 1) / threadsPB;
+    // error = cudaMemcpy(h_u, d_w, mem_size_nodes, cudaMemcpyDeviceToHost);
+	
+	// for (int g=0;g<9;g++)
+	// 	printf("w[%d]: %f\n",g,h_u[g]);
+
+	
+	kComputeR<<< blocksPerGrid, threadsPerBlock>>>(d_w, d_uc, d_u,node_count-fixed_nodes_count); 
+
+	error = cudaGetLastError();
+
+	if (error != cudaSuccess)
+	{
+		fprintf(stderr, "Failed to launch kComputeR kernel (error code %s)!\n", cudaGetErrorString(error));
+		exit(EXIT_FAILURE);
+	}
+
+	// error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
+
+
+/*#########---------Ends Compute R---------------#########*/
+
+
 
 /*#########---------Insert Zeros---------------#########*/
 
@@ -911,14 +955,14 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 		// Reuse arrays to save memory
 		if(i%2==1){
 			kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_uc, d_u, position, 3, size_nodestomodify+(i+1)*3);
-			kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_wc, d_w, position, 3, size_nodestomodify+(i+1)*3);
+			// kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_wc, d_w, position, 3, size_nodestomodify+(i+1)*3);
 
 			// remove this
 			// error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
 		}
 		else{
 			kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_u, d_uc, position, 3, size_nodestomodify+(i+1)*3);
-			kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_w, d_wc, position, 3, size_nodestomodify+(i+1)*3);
+			// kInsertZeros<<< blocksPerGrid, threadsPerBlock>>>(d_w, d_wc, position, 3, size_nodestomodify+(i+1)*3);
 
 			// remove this
 			// error = cudaMemcpy(h_u, d_uc, mem_size_nodes, cudaMemcpyDeviceToHost);
@@ -937,7 +981,7 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 	// Copy correct array - Now with R calculation included both original and copy must be the same
 	if(i%2==0){
 		error = cudaMemcpy(d_u, d_uc, size_nodes, cudaMemcpyDeviceToDevice);
-		error = cudaMemcpy(d_w, d_wc, size_nodes, cudaMemcpyDeviceToDevice);
+		// error = cudaMemcpy(d_w, d_wc, size_nodes, cudaMemcpyDeviceToDevice);
 	}
 	else{
 		error = cudaMemcpy(d_uc, d_u, size_nodes, cudaMemcpyDeviceToDevice);
@@ -962,30 +1006,6 @@ extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo
 /*#########---------Ends Insert Zeros---------------#########*/
 
 
-/*#########---------Compute R for every node and modify u---------------#########*/
-
-	// Each thread computes skew matrix for every node (x,y,z - 3 elements)
-	blocksPerGrid =(node_count + threadsPB - 1) / threadsPB;
-    error = cudaMemcpy(h_u, d_w, mem_size_nodes, cudaMemcpyDeviceToHost);
-	
-	// for (int g=0;g<9;g++)
-	// 	printf("w[%d]: %f\n",g,h_u[g]);
-
-	
-	kComputeR<<< blocksPerGrid, threadsPerBlock>>>(d_w, d_uc, d_u, node_count); 
-
-	error = cudaGetLastError();
-
-	if (error != cudaSuccess)
-	{
-		fprintf(stderr, "Failed to launch kComputeR kernel (error code %s)!\n", cudaGetErrorString(error));
-		exit(EXIT_FAILURE);
-	}
-
-	error = cudaMemcpy(h_u, d_u, mem_size_nodes, cudaMemcpyDeviceToHost);
-
-
-/*#########---------Ends Compute R---------------#########*/
 
 
 /*#########---------Render on OpenGL---------------#########*/
