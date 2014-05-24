@@ -124,27 +124,26 @@ GENCODE_FLAGS   := $(GENCODE_SM10) $(GENCODE_SM20) $(GENCODE_SM30)
 # Target rules
 all: build
 
-build: cuda_u
+build: mwgpu
 
-cuda_u.o: cuda_u.cu
+mwgpu.o: mwgpu.cu
 	$(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
 #cppIntegration_gold.o: cppIntegration_gold.cpp
 #	$(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
-main.o: main.cpp displacement.cpp
+main.o: main.cpp displacement.cpp file_loading.cpp
 	$(NVCC) $(IPATH) $(LPATH) $(LDLIBS) $(INCLUDES)  $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
-cuda_u: cuda_u.o main.o shader_utils.o
+mwgpu: mwgpu.o main.o shader_utils.o
 	$(NVCC) $(ALL_LDFLAGS) -o $@ $+ $(LDLIBS) $(LIBRARIES)
 	mkdir -p ../../bin/$(OS_ARCH)/$(OSLOWER)/$(TARGET)$(if $(abi),/$(abi))
-	cp $@ ../../bin/$(OS_ARCH)/$(OSLOWER)/$(TARGET)$(if $(abi),/$(abi))
+#	cp $@ ../../bin/$(OS_ARCH)/$(OSLOWER)/$(TARGET)$(if $(abi),/$(abi))
 
 run: build
-	./cuda_u
+	./mwgpu
 
 clean:
-	rm -f cuda_u cuda_u.o main.o *.bin
-#	rm -rf ../../bin/$(OS_ARCH)/$(OSLOWER)/$(TARGET)$(if $(abi),/$(abi))/cppIntegration
+	rm -f mwgpu mwgpu.o main.o *.bin
 
 clobber: clean

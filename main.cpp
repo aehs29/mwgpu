@@ -1,35 +1,4 @@
-#include <iostream>
-#include <stdlib.h>
-#include <stdio.h>
-#include <math.h>
-#include <unistd.h>
-#include <ctype.h>
-#include <iostream>
-#include <fstream>
-#include <string.h>
-#include <sstream>
-#include <time.h>
-#include <iomanip>
-
-
-// OpenGl Includes
-#include <GL/glew.h>
-#include <GL/glut.h>
-#include <GL/freeglut.h>
-
-/* CUDA Includes */
-#include <cuda_runtime.h>
-#include <vector_types.h>
-#include <cuda_gl_interop.h>
-
-/* GLM */
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include "shader_utils.h"
-
-// Serial Displacement
-#include "displacement.cpp"
+#include "mwgpu.h"
 
 using namespace std;
 
@@ -58,11 +27,12 @@ float h;
 
 
 // General counters
-int elem_count, elem_nodes;
-int node_count, node_dimensions;
 int eigencount;
-unsigned int fixed_nodes_count;
+nodes_struct ns;
+elem_struct es;
 
+// Tetgen Files might start from different indexes
+int node_init_index;
 
 // ToRenderOrNotToRender?, thats the question
 bool render=false;
@@ -141,28 +111,8 @@ GLint uniform_mvp;
 GLint attribute_coord3d, attribute_v_color;
 
 
-// Functions
-void ResizeFunction(int Width, int Height);
-void IdleFunction(void);
-void RenderFunction(void);
-void CreateVBO_CUDA(void);
-void processSpecialKeys(int key, int x, int y);
-void releaseKey(int key, int x, int y) ;
-void mouseMove(int x, int y);
-void mouseButton(int button, int state, int x, int y) ;
-void change_force(float *F, float *Fo, unsigned int node_count, unsigned int fixed_nodes_count, unsigned int node_dimensions, float force, int force_axis);
-void Cleanup(void);
-void DestroyShaders(void);
-void DestroyVBO(void);
 
-
-// Functions to call CUDA (compiled with nvcc)
-extern "C" void map_Texture(void *cuda_data, size_t size,cudaGraphicsResource *resource);
-extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float *buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float *d_nodes, float *h_Psy);
-extern "C" void* allocate_GPUnodes(float *nodes, unsigned int node_count, unsigned int node_dimensions);
-extern "C" bool free_GPUnodes(float *d_nodes);
-
-void GLM_MVP(GLuint pId){
+void GLM_MVP(GLuint pId, nodes_struct ns){
 // GLM Matrices
 	glm::vec3 axis_y(0, 1, 0);
 	glm::vec3 axis_x(1, 0, 0);
@@ -170,17 +120,22 @@ void GLM_MVP(GLuint pId){
 	glm::mat4 animy = glm::rotate(glm::mat4(1.0f), angleX, axis_x);
 
 	// Push object so its not close to the camera
-	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, zoom));
+	// glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, zoom));
 
-//	glm::mat4 modelcenter = glm::translate(glm::mat4(1.0f), glm::vec3(0.4, 10.0, 0.0));
+	// Should rotate around its own center
+	glm::mat4 model = glm::translate(glm::mat4(1.0f),glm::vec3(ns.center_x,ns.center_y,ns.center_z+zoom));
+	glm::mat4 model2 = glm::translate(glm::mat4(1.0f),glm::vec3(-ns.center_x,-ns.center_y,-ns.center_z));
 
 	// Lookat(eye,center,up) = position of cam, camera pointed to, top of the camera (tilted)
 	glm::mat4 view = glm::lookAt(glm::vec3(0.0, 0.0, 0.0), glm::vec3(posX, posY, -5.0), glm::vec3(0.0, 1.0, 0.0));
 	// Perspective
 	glm::mat4 projection = glm::perspective(45.0f, 1.0f*CurrentWidth/CurrentHeight, 0.1f, 100.0f);
 
+
+
 	// Calculate result
-	glm::mat4 mvp = projection * view * model * anim * animy;
+	glm::mat4 mvp = projection * view * model * anim * animy* model2;
+
 
 	glUseProgram(pId);
 	// glUseProgram(ProgramId2);
@@ -221,7 +176,7 @@ void IdleFunction(void)
 	// Only calculate if needed
 	if (force_changed=true){
 		force_changed=false;
-		change_force(F, Fo, node_count, fixed_nodes_count, node_dimensions, force, force_axis);
+		change_force(F, Fo, ns, force, force_axis);
 	}
 
 	// Window Title Info
@@ -269,12 +224,12 @@ void RenderFunction(void)
 			if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &size_resources, *resources) !=cudaSuccess)
 				printf("Resource pointer mapping failed...\n");
 
-			CUDAResult = displacement (q, qo, qd, qdo, F, Fo, Ro, alpha, alphaI, beta, gama, eigenVecs, h, u, eigencount, node_count, node_dimensions, block_size, cuda_dat, nodes, fixed_nodes, fixed_nodes_count, d_nodes, Psy);
+			CUDAResult = displacement (q, qo, qd, qdo, F, Fo, Ro, alpha, alphaI, beta, gama, eigenVecs, h, u, eigencount, ns.count, ns.dimensions, block_size, cuda_dat, nodes, fixed_nodes, ns.fixed_count, d_nodes, Psy);
 		}
 		else{
     /*Serial Code*/
 
-			displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, node_count-fixed_nodes_count, node_dimensions, node_count, fixed_nodes, nodes, Psy, nodes_orig);
+			displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, ns.count-ns.fixed_count, ns.dimensions, ns.count, fixed_nodes, nodes, Psy, nodes_orig);
 		
 			glBindBuffer(GL_ARRAY_BUFFER, BufferId);
 			glBufferSubData(GL_ARRAY_BUFFER,0, BufferSize, nodes);   
@@ -287,37 +242,19 @@ void RenderFunction(void)
 		std::copy(qd,qd+eigencount,qdo);
 		std::copy(q,q+eigencount,qo);
 		// std::copy(R,R+tot_rowCount,Ro);
-		std::copy(F,F+((node_count-fixed_nodes_count)*node_dimensions),Fo);
+		std::copy(F,F+((ns.count-ns.fixed_count)*ns.dimensions),Fo);
 	}
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	// ProgramId= glCreateProgram();
-	// glAttachShader(ProgramId, VertexShaderId);
-	// glAttachShader(ProgramId, FragmentShaderId);
-	// OpenGL Rende
-
-	// Old Coloring
-    // glColor3f(red,green,blue);
-    // glDrawElements(GL_QUAD_STRIP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
+	
 	if(onlyNodes==false){
-			GLM_MVP(ProgramId);
-		// glLinkProgram(ProgramId);
-		glDrawElements(GL_TRIANGLES, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
+		GLM_MVP(ProgramId, ns);
+		glDrawElements(GL_QUADS, es.count*es.nodes, GL_UNSIGNED_SHORT, NULL);
 	}
 
-	// glAttachShader(ProgramId, FragmentShaderLinesId);
-	// glLinkProgram(ProgramId);
-    //glDrawElements(GL_TRIANGLE_STRIP, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
-
-	// glColor3f(1.0f,1.0f,1.0f);
-    //glDrawElements(GL_LINE_LOOP, elem_count*elem_nodes*sizeof(elem[0]), GL_UNSIGNED_SHORT, NULL);
-	//glDrawElements(GL_POINTS, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
-	// glDetachShader(ProgramId, FragmentShaderId);
-	// glAttachShader(ProgramId, FragmentShaderLinesId);
-	// glLinkProgram(ProgramId);
-	GLM_MVP(ProgramId2);
-	glDrawElements(GL_LINES, elem_count*elem_nodes, GL_UNSIGNED_SHORT, NULL);
+	GLM_MVP(ProgramId2, ns);
+	glDrawElements(GL_LINES, es.count*es.nodes, GL_UNSIGNED_SHORT, NULL);
 
     //glDrawElements(GL_LINES, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
     
@@ -329,8 +266,8 @@ void CreateVBO_CUDA(void)
 {
 
     // Sizes
-	BufferSize = sizeof(float)*node_count*node_dimensions; // 544: 32 per element on sphere
-	VertexSize = sizeof(nodes[0])*node_dimensions; // Square: 12: 4 bytes (float) * node_dimension (3) on sphere
+	BufferSize = sizeof(float)*ns.count*ns.dimensions; // 544: 32 per element on sphere
+	VertexSize = sizeof(nodes[0])*ns.dimensions; // Square: 12: 4 bytes (float) * node_dimension (3) on sphere
 	
 	// Declare VertexA
 	glGenVertexArrays(1, &VaoId);
@@ -351,7 +288,7 @@ void CreateVBO_CUDA(void)
  	// Element Buffer
 	glGenBuffers(2, IndexBufferId);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, elem_count*elem_nodes*sizeof(elem),elem, GL_STATIC_DRAW); // Check Size
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),elem, GL_STATIC_DRAW); // Check Size
 
     // Register Pixel Buffer Object as CUDA graphics resource
 	cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
@@ -365,8 +302,8 @@ void CreateVBO(void)
 {
 
     // Sizes
-	BufferSize = sizeof(float)*node_count*node_dimensions; // 544: 32 per element on sphere
-	VertexSize = sizeof(nodes[0])*node_dimensions; // Square: 12: 4 bytes (float) * node_dimension (3) on sphere
+	BufferSize = sizeof(float)*ns.count*ns.dimensions; // 544: 32 per element on sphere
+	VertexSize = sizeof(nodes[0])*ns.dimensions; // Square: 12: 4 bytes (float) * node_dimension (3) on sphere
 	
 	// Declare VertexA
 	glGenVertexArrays(1, &VaoId);
@@ -387,14 +324,8 @@ void CreateVBO(void)
  	// Element Buffer
 	glGenBuffers(2, IndexBufferId);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, elem_count*elem_nodes*sizeof(elem),elem, GL_STATIC_DRAW); // Check Size
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),elem, GL_STATIC_DRAW); // Check Size
 
-    // Register Pixel Buffer Object as CUDA graphics resource
-//	cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
-
-    //Map the graphics resource
-//	if (cudaGraphicsMapResources(1, resources,0) != cudaSuccess)
-	//      printf("Resource mapping failed...\n");
 }
 
 void Cleanup(void){
@@ -675,18 +606,18 @@ void mouseButton(int button, int state, int x, int y)
 	}
 }
 
-void change_force(float *F, float *Fo, unsigned int node_count, unsigned int fixed_nodes_count, unsigned int node_dimensions, float force, int force_axis)
+void change_force(float *F, float *Fo, nodes_struct ns, float force, int force_axis)
 {
 
 	// Delcare F in only 1 direction
-	for (int i=0;i<(node_count-fixed_nodes_count)*node_dimensions;i++){
+	for (int i=0;i<(ns.count-ns.fixed_count)*ns.dimensions;i++){
 		if(3-(i%3)==force_axis)
 			F[i]=force;
 		else
 			F[i]=0;
 	}
 	// Copy F to Fo
-	std::copy(F,F+((node_count-fixed_nodes_count)*node_dimensions),Fo);
+	std::copy(F,F+((ns.count-ns.fixed_count)*ns.dimensions),Fo);
 }
 
 
@@ -836,296 +767,17 @@ int main(int argc, char **argv)
 
 /*#########---------File Loading------------#########*/
 
+	node_init_index = load_nodefile(nname.c_str(),nodes, &ns);
 
-/* Open Files  */
+	load_elemfile(ename.c_str(),elem, &es, node_init_index);
 
-	// Node File
-	ifstream node_file(nname.c_str());
-	string line;
-	
-	int line_count=0;
-	int node_start=0;
+	eigencount = load_eigenvalsfile(kname.c_str(),eigenVals);
 
-	while(std::getline(node_file,line))
-	{
-        // Get rid of carriage return
-		if(line[line.length()-1]=='\r')
-			line[line.length()-1]='\0';
-		std::stringstream  lineStream(line);
-        std::string        cell;
-		int val_count=0;
-        while(std::getline(lineStream,cell,' '))
-        {
-			if(cell.length()>0)
-			{
-				if(line_count==0)
-				{
-					if(val_count==0)
-						// Get Number of Nodes
-						node_count=atoi(cell.c_str());
-					else if(val_count==1){
-						//Get Number of Dimensions
-						node_dimensions=atoi(cell.c_str());
-						nodes=new float[node_count*node_dimensions];
-						nodes_orig=new float[node_count*node_dimensions];
+	load_fxdnodesfile(fixedname.c_str(), fixed_nodes ,&ns);
 
-					}
+	load_eigenvecfile(eigenvec_name.c_str(), eigenVecs , &ns, eigencount);
 
-				}
-				else
-				{
-					// Check speed of conversion
-					char* p;
-					float converted = strtof(cell.c_str(), &p);
-					if (*p) 
-					{
-						// conversion failed because the input wasn't a number
-					}
-					else 
-					{
-						if(line_count==1 & val_count==0)
-							node_start=converted;
-						if(val_count>0)
-							nodes[node_dimensions*(line_count-1)+(val_count-1)]=converted;
-					}
-				}
-				val_count++;
-			}
-		}
-		line_count++;
-	}
-
-
-    // Elements File
-	ifstream elem_file(ename.c_str());	
-	line_count=0;
-	while(std::getline(elem_file,line))
-	{
-        // Get rid of carriage return
-		if(line[line.length()-1]=='\r')
-			line[line.length()-1]='\0';
-		std::stringstream  lineStream(line);
-        std::string        cell;
-		int val_count=0;
-        while(std::getline(lineStream,cell,' '))
-        {
-			if(cell.length()>0)
-			{
-				if(line_count==0)
-				{
-					if(val_count==0)
-						// Get Number of Elements
-						elem_count=atoi(cell.c_str());
-					else if(val_count==1){
-						//Get Number of Element Nodes
-						elem_nodes=atoi(cell.c_str());
-						// Allocate array
-						elem=new GLshort[elem_count*elem_nodes];
-					}
-				}
-				else
-				{
-					char* p;
-					GLshort converted = strtol(cell.c_str(), &p,10); // Add base 10
-					if (*p) 
-					{
-						// conversion failed because the input wasn't a number
-					}
-					else 
-					{
-						if(val_count>0)
-						{
-							elem[elem_nodes*(line_count-1)+(val_count-1)]=converted-node_start;
-						}
-					}
-				}
-				val_count++;
-			}
-		}
-		line_count++;
-	}
-
-	// EigenFile
-
-	// No need for columns in EIGENVALUES
-    // Get file handle
-	std::ifstream csv_file_rows(kname.c_str());
-	std::ifstream csv_file(kname.c_str());
-	unsigned int row_count=0;
-	unsigned int tot_rowCount;
-
-    // Read whole file to get row and count - Don't like it but its only done once
-	while (std::getline(csv_file_rows,line)){
-		row_count++;
-	}
-
-	tot_rowCount=row_count;
-
-	// Allocate array
-	eigenVals=new float[tot_rowCount];
-
-	row_count=0;				// reset value
-
-	// Read file to initialize array
-	while (std::getline(csv_file,line)){
-		// Get rid of carriage return
-		if(line[line.length()-1]=='\r')
-			line[line.length()-1]='\0';
-		std::stringstream lineStream(line);
-		std::string colVal;
-		
-		// Separate values by ',' (CSV)
-		while(std::getline(lineStream,colVal,',')){
-			if(colVal.length()>0){ // Could assert also
-
-				// Convert char* to float
-				char *p;
-				float converted = strtof(colVal.c_str(),&p);
-				if (*p){}
-				else{
-					eigenVals[row_count]=converted;
-				}
-			}
-		}
-		row_count++;
-	}
-
-
-    // Fixed Nodes
-
-	// No need for columns in Fixed Nodes either
-    // Get file handle
-	std::ifstream fixed_nodes_rows(fixedname.c_str());
-	std::ifstream fixed_nodes_file(fixedname.c_str());
-
-    row_count=0;				// Reset
-
-    // Read whole file to get row and count
-	while (std::getline(fixed_nodes_rows,line)){
-		row_count++;
-	}
-
-	fixed_nodes_count=row_count;
-
-	// Allocate array
-	fixed_nodes=new int[fixed_nodes_count];
-
-	row_count=0;				// reset value
-
-	// Read file to initialize array
-	while (std::getline(fixed_nodes_file,line)){
-
-		// Get rid of carriage return
-		if(line[line.length()-1]=='\r')
-			line[line.length()-1]='\0';
-		std::stringstream lineStream(line);
-		std::string colVal;
-
-		// Separate values by ',' (CSV)
-		while(std::getline(lineStream,colVal,',')){
-			if(colVal.length()>0){ // Could assert also
-				// Convert char* to float
-				char *p;
-				int converted = strtol(colVal.c_str(),&p,10);
-				if (*p){}
-				else{
-					fixed_nodes[row_count]=converted-1;
-				}
-			}
-		}
-		row_count++;
-	}
-
-    // EigenVectorsFile
-
-    // Get file handle
-
-	std::ifstream eigenvec_file_rows(eigenvec_name.c_str());
-	std::ifstream eigenvec_file(eigenvec_name.c_str());
-
-	// Columns should be same as eigenVals count
-	// Rows should be the same as nodes x dimensions
-	unsigned int col_countEvec=0;
-	unsigned int tot_colCountEvec;
-	
-	// Columns same as EigenVals count
-	tot_colCountEvec=tot_rowCount;
-
-	// Allocate array
-	eigenVecs=new float[(node_count-fixed_nodes_count)*node_dimensions*tot_colCountEvec];
-
-	row_count=0;				// reset value
-
-	// Read file to initialize array
-	while (std::getline(eigenvec_file,line)){
-
-		// Get rid of carriage return
-		if(line[line.length()-1]=='\r')
-			line[line.length()-1]='\0';
-		std::stringstream lineStream(line);
-		std::string colVal;
-		
-		// Reset col value
-		col_countEvec=0;
-
-		// Separate values by ',' (CSV)
-		while(std::getline(lineStream,colVal,',')){
-			if(colVal.length()>0){ // Could assert also
-				// Convert char* to float
-				char *p;
-				float converted = strtof(colVal.c_str(),&p);
-				if (*p){}
-				else{
-					eigenVecs[(tot_colCountEvec*row_count)+col_countEvec]=converted;
-				}
-			}
-			col_countEvec++;
-		}
-		row_count++;
-	}
-
-	// Psy
-    // Get file handle
-
-	std::ifstream psy_file(psyname.c_str());
-
-	// Columns should be same as eigenVals count
-	// Rows should be the same as nodes x dimensions
-    col_countEvec=0;			// Reuse from EigenVecs	
-
-
-	// Allocate array
-	Psy=new float[(node_count-fixed_nodes_count)*node_dimensions*tot_colCountEvec];
-
-	row_count=0;				// reset value
-
-	// Read file to initialize array
-	while (std::getline(psy_file,line)){
-
-		// Get rid of carriage return
-		if(line[line.length()-1]=='\r')
-			line[line.length()-1]='\0';
-		std::stringstream lineStream(line);
-		std::string colVal;
-		
-		// Reset col value
-		col_countEvec=0;
-
-		// Separate values by ',' (CSV)
-		while(std::getline(lineStream,colVal,',')){
-			if(colVal.length()>0){ // Could assert also
-				// Convert char* to float
-				char *p;
-				float converted = strtof(colVal.c_str(),&p);
-				if (*p){}
-				else{
-					Psy[(tot_colCountEvec*row_count)+col_countEvec]=converted;
-				}
-			}
-			col_countEvec++;
-		}
-		row_count++;
-	}
+	load_Psyfile(psyname.c_str(), Psy , &ns, eigencount);
 
 
 /*#########---------Ends File Loading---------------#########*/
@@ -1138,22 +790,22 @@ int main(int argc, char **argv)
 	// Timestep
 	h=0.03;
 
-	d = new float[tot_rowCount*tot_rowCount];
-	alpha = new float[tot_rowCount*tot_rowCount];
-	beta = new float[tot_rowCount*tot_rowCount];
-	gama = new float[tot_rowCount*tot_rowCount];
-	M =  new float[tot_rowCount*tot_rowCount];
-	C =  new float[tot_rowCount];
+	d = new float[eigencount*eigencount];
+	alpha = new float[eigencount*eigencount];
+	beta = new float[eigencount*eigencount];
+	gama = new float[eigencount*eigencount];
+	M =  new float[eigencount*eigencount];
+	C =  new float[eigencount];
 
 	// Create alpha-identity
-	alphaI = new float[tot_rowCount*tot_rowCount];
+	alphaI = new float[eigencount*eigencount];
 
 
 	// 2 nested fors to declare square diagonal matrices
-	for(int i=0;i<tot_rowCount;i++){
+	for(int i=0;i<eigencount;i++){
 		// Maybe only need 1 for ? - TODO
-		for(int j=0;j<tot_rowCount;j++){
-			int index=i*tot_rowCount+j;
+		for(int j=0;j<eigencount;j++){
+			int index=i*eigencount+j;
 			// Only declare diagonal elements
 			if(i==j){
 				M[index]=1;
@@ -1183,20 +835,20 @@ int main(int argc, char **argv)
 
     // Allocate vectors
     // F and u node dimensioned all others EigenVals dimensioned
-	F = new float[(node_count-fixed_nodes_count)*node_dimensions];
-	Fo = new float[(node_count-fixed_nodes_count)*node_dimensions];
-	q = new float[tot_rowCount];
-	qo = new float[tot_rowCount];
-	qd = new float[tot_rowCount];
-	qdo = new float[tot_rowCount];
-	u = new float[node_count*node_dimensions];
-	R = new float[node_count*node_dimensions*node_count*node_dimensions];
-	Ro = new float[node_count*node_dimensions*node_count*node_dimensions];
+	F = new float[(ns.count-ns.fixed_count)*ns.dimensions];
+	Fo = new float[(ns.count-ns.fixed_count)*ns.dimensions];
+	q = new float[eigencount];
+	qo = new float[eigencount];
+	qd = new float[eigencount];
+	qdo = new float[eigencount];
+	u = new float[ns.count*ns.dimensions];
+	R = new float[ns.count*ns.dimensions*ns.count*ns.dimensions];
+	Ro = new float[ns.count*ns.dimensions*ns.count*ns.dimensions];
 
-	change_force(F, Fo, node_count, fixed_nodes_count, node_dimensions, force, force_axis);
+	change_force(F, Fo, ns, force, force_axis);
 	
 	// For loop to initialize all other vectors (all 0's)
-	for (int i=0;i<tot_rowCount;i++){
+	for (int i=0;i<eigencount;i++){
 		q[i]=0;
 		qo[i]=0;
 		qd[i]=0;
@@ -1212,21 +864,22 @@ int main(int argc, char **argv)
 		CreateVBO();
 	CreateShaders();
 
-	eigencount=tot_rowCount;
+	eigencount=eigencount;
 
-	// Print some info
-	cout<<"Nodes: "<<node_count<<"\t";
-	cout<<"Dimensions: "<<node_dimensions<<"\n";
-	cout<<"Elements: "<<elem_count<<"\t";
-	cout<<"Nodes per Element: "<<elem_nodes<<"\n";
-	std::cout<<"# Eigenvalues: "<<tot_rowCount<<"\n";
-	std::cout<<"Eigenvectors matrix dimensions:"<<node_count*node_dimensions<<"x"<<tot_rowCount<<"\n";
+	// Print some info - TODO
+	cout<<"Nodes: "<<ns.count<<"\t";
+	cout<<"Dimensions: "<<ns.dimensions<<"\n";
+	cout<<"Elements: "<<es.count<<"\t";
+	cout<<"Nodes per Element: "<<es.nodes<<"\n";
+	std::cout<<"# Eigenvalues: "<<eigencount<<"\n";
+	std::cout<<"Eigenvectors matrix dimensions:"<<ns.count*ns.dimensions<<"x"<<eigencount<<"\n";
 
-
-	std::copy(nodes,nodes+node_count*node_dimensions,nodes_orig);
+	nodes_orig=new float[ns.count*ns.dimensions];
+						
+	std::copy(nodes,nodes+ns.count*ns.dimensions,nodes_orig);
 
 	// Allocate GPU globals before main loop instead of doing it every time
-	allocate_GPUnodes( nodes, node_count, node_dimensions);
+	allocate_GPUnodes( nodes, ns.count, ns.dimensions);
 
 
 	fps_start = glutGet(GLUT_ELAPSED_TIME);

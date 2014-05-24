@@ -64,21 +64,30 @@ Modal Warping on GPU v 1.3.2
 
 #######################
 
+
+#######################
+Modal Warping on GPU v 1.3.4
+- Code is now modular "Programacion modular chavoos"
+- Created structs for nodes and elements
+- Object now rotates around its center
+- Changed filenames to mwgpu
+
+#######################
+
 TODO:
 OpenGL:
 - Render Info Text
 - Click to fix face functionality?***
 
 CUDA:
-- Declare globals on device for constant arrays
 - Add Eigenvectors computation***
-- Cleanup Again
 - Improve Performance
+- Declare globals on device for constant arrays
+- Cleanup Again
 
 
 C++:
 - Check variables not used
-- Make it modular (File_Loading.h, etc)
 
 ########################
 

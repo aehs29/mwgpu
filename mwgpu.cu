@@ -270,7 +270,7 @@ extern "C" void map_Texture(void *cuda_dat, size_t siz,cudaGraphicsResource *res
 
 
 
-extern "C" void allocate_GPUnodes(float *nodes, unsigned int node_count, unsigned int node_dimensions)
+extern "C" void allocate_GPUnodes(float *nodes, int node_count, int node_dimensions)
 {
 	unsigned int size_nodes = node_count * node_dimensions;
 
