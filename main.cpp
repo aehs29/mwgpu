@@ -19,6 +19,8 @@ float *Psy;
 float *d,*alpha, *alphaI,*beta,*gama, *C, *M;
 float *F, *Fo, *q, *qo, *qd, *qdo, *u, *R, *Ro;
 
+// Test, delete afterwards
+float *dd_alphaI;
 
 const int block_size=16;	// Change this according to NVIDIA Card
 
@@ -879,7 +881,14 @@ int main(int argc, char **argv)
 	std::copy(nodes,nodes+ns.count*ns.dimensions,nodes_orig);
 
 	// Allocate GPU globals before main loop instead of doing it every time
-	allocate_GPUnodes( nodes, ns.count, ns.dimensions);
+	allocate_GPUmem(nodes, alphaI, alpha, beta, gama, eigenVecs, Psy, ns.count, ns.dimensions, ns.fixed_count, eigencount);
+
+
+	if(parallel==true){
+		// Free memory not used anymore
+
+
+	}
 
 
 	fps_start = glutGet(GLUT_ELAPSED_TIME);
@@ -887,7 +896,7 @@ int main(int argc, char **argv)
 	glutMainLoop();
 
 
-	free_GPUnodes(d_nodes);		// TODO - pass device globals
+	free_GPUnodes();		// TODO - pass device globals
 
 	cudaDeviceReset();
 

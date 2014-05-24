@@ -54,5 +54,5 @@ void GLM_MVP(GLuint pId);
 // Functions to call CUDA (compiled with nvcc)
 extern "C" void map_Texture(void *cuda_data, size_t size,cudaGraphicsResource *resource);
 extern "C" bool displacement (float *h_q, float *h_qo, float *h_qd, float *h_qdo, float *h_F, float *h_Fo, float *h_Ro, float *h_alpha, float * h_alphaI, float *h_beta, float *h_gama, float *h_eigenVecs, float h_h, float *h_u, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float *buffer, float *h_nodes, int *fixed_nodes, unsigned int fixed_nodes_count, float *d_nodes, float *h_Psy);
-extern "C" void* allocate_GPUnodes(float *nodes, int node_count, int nod_dimensions);
-extern "C" bool free_GPUnodes(float *d_nodes);
+extern "C" bool free_GPUnodes();
+extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, float *h_beta, float *h_gamma, float *h_eigenVecs, float *h_Psy, int node_count, int node_dimensions, int fixed_nodes_count,  int eigencount);
