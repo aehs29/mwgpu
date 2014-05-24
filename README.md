@@ -66,7 +66,7 @@ Modal Warping on GPU v 1.3.2
 
 
 #######################
-Modal Warping on GPU v 1.3.4
+Modal Warping on GPU v 1.3.3
 - Code is now modular "Programacion modular chavoos"
 - Created structs for nodes and elements
 - Object now rotates around its center
