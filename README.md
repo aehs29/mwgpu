@@ -4,7 +4,7 @@ mwgpu
 Modal Warping Using Parallel Programming on the GPU
 
 #######################
-OpenGL on CUDA v 1.0
+OpenGL on CUDA v1.0
 
 - Zoom is performed by scaling node locations by some factor
 - OpenGL is using a VBO
@@ -16,7 +16,7 @@ OpenGL on CUDA v 1.0
 
 
 #######################
-CUDA Displacement v 1.1
+CUDA Displacement v1.1
 
 - Loading values of modified K and M Matrices and fixed_nodes indices
 - Only one function to calculate and render
@@ -29,7 +29,7 @@ CUDA Displacement v 1.1
 #######################
 
 #######################
-Modal Warping on GPU v 1.2
+Modal Warping on GPU v1.2
 
 - Added GLM Library
 - New Rotation Method
@@ -46,7 +46,7 @@ Modal Warping on GPU v 1.2
 #######################
 
 #######################
-Modal Warping on GPU v 1.3.1
+Modal Warping on GPU v1.3.1
 - R computation works serially
 - Multiple Fragment Shaders
 - Changed primitive types (Draw)
@@ -56,7 +56,7 @@ Modal Warping on GPU v 1.3.1
 #######################
 
 #######################
-Modal Warping on GPU v 1.3.2
+Modal Warping on GPU v1.3.2
 - R computation works in parallel
 - Insert zeros now after computing R
 - Fixed some problem when destroying shaders
@@ -66,7 +66,7 @@ Modal Warping on GPU v 1.3.2
 
 
 #######################
-Modal Warping on GPU v 1.3.3
+Modal Warping on GPU v1.3.3
 - Code is now modular "Programacion modular chavoos"
 - Created structs for nodes and elements
 - Object now rotates around its center
@@ -74,20 +74,25 @@ Modal Warping on GPU v 1.3.3
 
 #######################
 
+#######################
+Modal Warping on GPU v1.3.4
+- Improved performance on GPU by minimizing memory transfers
+- Globals declared on device at the start
+- Change # of GPU threads from terminal
+- Cleaned up some code
+
+#######################
+
 TODO:
+
 OpenGL:
 - Render Info Text
 - Click to fix face functionality?***
 
 CUDA:
 - Add Eigenvectors computation***
-- Improve Performance
-- Declare globals on device for constant arrays
-- Cleanup Again
-
 
 C++:
-- Check variables not used
 
 ########################
 

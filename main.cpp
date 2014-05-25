@@ -10,7 +10,6 @@ GLshort *elem;
 float *eigenVals;
 float *eigenVecs;
 int *fixed_nodes;
-float *d_nodes;
 float *Psy;
 
 
@@ -19,21 +18,18 @@ float *Psy;
 float *d,*alpha, *alphaI,*beta,*gama, *C, *M;
 float *F, *Fo, *q, *qo, *qd, *qdo, *u, *R, *Ro;
 
-// Test, delete afterwards
-float *dd_alphaI;
-
 const int block_size=16;	// Change this according to NVIDIA Card
+unsigned int maxThreadsBlock = 512;
 
 // Timestep
 float h;
 
-
-// General counters
+// General counters & structs
 int eigencount;
 nodes_struct ns;
 elem_struct es;
 
-// Tetgen Files might start from different indexes
+// Tetgen Files might have an offset
 int node_init_index;
 
 // ToRenderOrNotToRender?, thats the question
@@ -41,7 +37,6 @@ bool render=false;
 
 // Old coloring
 float red=1.0f, blue=0.0f, green=0.0f;
-
 
 // OpenGL rotating variables
 float angle = 0.0f;
@@ -90,7 +85,7 @@ bool onlyNodes=false;
 // Performance measurement
 static unsigned int fps_start = 0;
 static unsigned int fps_frames = 0;
-int tpf;
+int tpf;						// Time Per Frame in msec
 
 
 // Virtual Buffer Objects (VBO's) vars
@@ -108,7 +103,6 @@ GLuint
 	ActiveIndexBuffer = 0;
 
 // GLSL variables
-//GLuint program;
 GLint uniform_mvp;
 GLint attribute_coord3d, attribute_v_color;
 
@@ -122,8 +116,6 @@ void GLM_MVP(GLuint pId, nodes_struct ns){
 	glm::mat4 animy = glm::rotate(glm::mat4(1.0f), angleX, axis_x);
 
 	// Push object so its not close to the camera
-	// glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, zoom));
-
 	// Should rotate around its own center
 	glm::mat4 model = glm::translate(glm::mat4(1.0f),glm::vec3(ns.center_x,ns.center_y,ns.center_z+zoom));
 	glm::mat4 model2 = glm::translate(glm::mat4(1.0f),glm::vec3(-ns.center_x,-ns.center_y,-ns.center_z));
@@ -133,18 +125,14 @@ void GLM_MVP(GLuint pId, nodes_struct ns){
 	// Perspective
 	glm::mat4 projection = glm::perspective(45.0f, 1.0f*CurrentWidth/CurrentHeight, 0.1f, 100.0f);
 
-
-
 	// Calculate result
 	glm::mat4 mvp = projection * view * model * anim * animy* model2;
-
 
 	glUseProgram(pId);
 	// glUseProgram(ProgramId2);
 	glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
 
 	glutPostRedisplay();
-
 
 }
 
@@ -159,13 +147,11 @@ if (Height == 0)
 	CurrentWidth = Width;
 	CurrentHeight = Height;
 	glViewport(0, 0, CurrentWidth, CurrentHeight);
-//	gluPerspective(45.0f, ratio, 0.1f, 100.0f); // DANGER
 	glMatrixMode(GL_MODELVIEW);
 }
 
 void IdleFunction(void)
 {
-
 	fps_frames++;
     int delta_t = glutGet(GLUT_ELAPSED_TIME) - fps_start;
     if (delta_t > 1000) {
@@ -204,8 +190,6 @@ void IdleFunction(void)
 	posY+=DposY;
 	angle+=deltaAngle;
 	angleX+=deltaAngleX;
-
-	
 }
 
 void RenderFunction(void)
@@ -214,9 +198,7 @@ void RenderFunction(void)
 	angle+=deltaAngle;
 	angleX+=deltaAngleX;
    
-    
-
-	// Calculate & Render Displacement
+    // Calculate & Render Displacement
 
     /* Parallel Code*/
 
@@ -226,7 +208,7 @@ void RenderFunction(void)
 			if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &size_resources, *resources) !=cudaSuccess)
 				printf("Resource pointer mapping failed...\n");
 
-			CUDAResult = displacement (q, qo, qd, qdo, F, Fo, Ro, alpha, alphaI, beta, gama, eigenVecs, h, u, eigencount, ns.count, ns.dimensions, block_size, cuda_dat, nodes, fixed_nodes, ns.fixed_count, d_nodes, Psy);
+			CUDAResult = displacement (qo, qdo, Fo, h, eigencount, ns.count, ns.dimensions, block_size, cuda_dat, fixed_nodes, ns.fixed_count, maxThreadsBlock);
 		}
 		else{
     /*Serial Code*/
@@ -238,13 +220,12 @@ void RenderFunction(void)
 			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
 			glEnableVertexAttribArray(0); 
 			
+			// Copy Old values
+			std::copy(qd,qd+eigencount,qdo);
+			std::copy(q,q+eigencount,qo);
 		}
 
-		// Copy Old values
-		std::copy(qd,qd+eigencount,qdo);
-		std::copy(q,q+eigencount,qo);
-		// std::copy(R,R+tot_rowCount,Ro);
-		std::copy(F,F+((ns.count-ns.fixed_count)*ns.dimensions),Fo);
+   		std::copy(F,F+((ns.count-ns.fixed_count)*ns.dimensions),Fo);
 	}
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -290,7 +271,7 @@ void CreateVBO_CUDA(void)
  	// Element Buffer
 	glGenBuffers(2, IndexBufferId);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),elem, GL_STATIC_DRAW); // Check Size
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),elem, GL_STATIC_DRAW);
 
     // Register Pixel Buffer Object as CUDA graphics resource
 	cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
@@ -326,7 +307,7 @@ void CreateVBO(void)
  	// Element Buffer
 	glGenBuffers(2, IndexBufferId);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),elem, GL_STATIC_DRAW); // Check Size
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),elem, GL_STATIC_DRAW);
 
 }
 
@@ -475,7 +456,7 @@ void processNormalKeys(unsigned char key, int x, int y) {
 		else
 			render=true;
 	}
-	if (key==8){				// Space
+	if (key==8){				// Backspace
 		if(onlyNodes==true)
 			onlyNodes=false;
 		else
@@ -493,23 +474,14 @@ void processSpecialKeys(int key, int x, int y)
 		force-=force_constant;
 		force_changed=true;
 		break;
-		// red = 1.0;
-		// green = 0.0;
-		// blue = 0.0;
 	case GLUT_KEY_F2 :
 		force+=force_constant;
 		force_changed=true;
 		break;
-		// red = 0.0;
-		// green = 1.0;
-		// blue = 0.0;
 	case GLUT_KEY_F3 :
 		force_changed=true;
 		force_axis=1;
 		break;
-		// red = 0.0;
-		// green = 0.0;
-		// blue = 1.0; 
 	case GLUT_KEY_F4 :
 		force_changed=true;
 		force_axis=2;
@@ -518,9 +490,6 @@ void processSpecialKeys(int key, int x, int y)
 		force_changed=true;
 		force_axis=3;
 		break;
-		// red = 1.0;
-		// green = 1.0;
-		// blue = 1.0;
 
 		// Rotate object with keys
 		case GLUT_KEY_LEFT : deltaAngle = -0.35f; break;
@@ -677,6 +646,7 @@ int main(int argc, char **argv)
 
 /*#########---------Ends OpenGL Init------------#########*/
 
+
 /*#########---------Starts Getopts code------------#########*/
 
 
@@ -686,9 +656,9 @@ int main(int argc, char **argv)
 	int c, err = 0; 
 	int nflag=0, kflag=0;
 	string ename,nname,kname,eigenvec_name, fixedname, psyname;
-	static char usage[] = "usage: %s -n Node_filename [-k eigen_filename] \n";
+	static char usage[] = "usage: %s -n Node_filename [-p 1 || 0] [-t threadsonGPU] \n";
 
-	while ((c = getopt(argc, argv, "n:kp:")) != -1)
+	while ((c = getopt(argc, argv, "n:p:t:")) != -1)
 		switch (c) {
 		case 'n':
 			nflag = 1;
@@ -718,8 +688,9 @@ int main(int argc, char **argv)
 		// 	break;
 		case 'p':
 			istringstream(optarg) >> parallel;
-
-			// parallel=optarg;
+			break;
+        case 't':
+			maxThreadsBlock=atoi(optarg);
 			break;
 		}
 	if (nflag == 0) 
@@ -883,26 +854,16 @@ int main(int argc, char **argv)
 	// Allocate GPU globals before main loop instead of doing it every time
 	allocate_GPUmem(nodes, alphaI, alpha, beta, gama, eigenVecs, Psy, ns.count, ns.dimensions, ns.fixed_count, eigencount);
 
-
-	if(parallel==true){
-		// Free memory not used anymore
-
-
-	}
-
-
 	fps_start = glutGet(GLUT_ELAPSED_TIME);
 
 	glutMainLoop();
 
-
-	free_GPUnodes();		// TODO - pass device globals
+	free_GPUnodes();
 
 	cudaDeviceReset();
 
 
 /*#########---------Free System Memory---------------#########*/
-
 
 	free(nodes);
 	free(elem);
