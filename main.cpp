@@ -129,7 +129,7 @@ void GLM_MVP(GLuint pId, nodes_struct ns){
 	glm::mat4 model2 = glm::translate(glm::mat4(1.0f),glm::vec3(-ns.center_x,-ns.center_y,-ns.center_z));
 
 	// Lookat(eye,center,up) = position of cam, camera pointed to, top of the camera (tilted)
-	glm::mat4 view = glm::lookAt(glm::vec3(0.0, 0.0, 0.0), glm::vec3(posX, posY, -5.0), glm::vec3(0.0, 1.0, 0.0));
+	glm::mat4 view = glm::lookAt(glm::vec3(ns.center_x,ns.center_y, ns.center_z), glm::vec3(ns.center_x+posX, ns.center_y+posY, ns.center_z -3.0), glm::vec3(0.0, 1.0, 0.0));
 	// Perspective
 	glm::mat4 projection = glm::perspective(45.0f, 1.0f*CurrentWidth/CurrentHeight, 0.1f, 100.0f);
 
