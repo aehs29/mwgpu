@@ -83,6 +83,14 @@ Modal Warping on GPU v1.3.4
 
 #######################
 
+
+#######################
+Modal Warping on GPU v1.3.5
+- Simulation now on IdleFunction
+- Separate performance measurement for simulation and rendering
+- Added performance measurement on CUDA and C++
+#######################
+
 TODO:
 
 OpenGL:
@@ -91,9 +99,29 @@ OpenGL:
 
 CUDA:
 - Add Eigenvectors computation***
+- Modify kInsertZeros
+  - Either keep an array with indexes to modify
+  	-Sparse (Keep indexes) or Dense
+  - Or use syncthreads and launch only one kernel
+- Should I use SharedMem instead of GlobalMem?
+- Change float64 to float32
+- Coalesced memory comments
+- GpuTimer timer;
+  - timer.Start();
+  - timer.Stop();
+- Use streams for kernel launches
 
 C++:
-
+- GetFaces()
+  - Get max and min for every axis
+  - Count # nodes per face -- hashmap?
+  - if node has a min or max in any axis is part of face
+  -	Prioritize the face with less nodes
+  - Only render nodes on faces
+  - Color by face
+  	- How to let the vertex know its a face
+	  - VertexAttribute? containing values
+	  - Check which face it is on Fragment Shader and colorize
 ########################
 
 

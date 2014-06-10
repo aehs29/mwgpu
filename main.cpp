@@ -86,6 +86,7 @@ bool onlyNodes=false;
 static unsigned int fps_start = 0;
 static unsigned int fps_frames = 0;
 int tpf;						// Time Per Frame in msec
+float simtime;					// Time measurement of Simulation in msec
 
 
 // Virtual Buffer Objects (VBO's) vars
@@ -152,7 +153,7 @@ if (Height == 0)
 
 void IdleFunction(void)
 {
-	fps_frames++;
+   	fps_frames++;
     int delta_t = glutGet(GLUT_ELAPSED_TIME) - fps_start;
     if (delta_t > 1000) {
 		// cout << delta_t / fps_frames << endl;
@@ -182,7 +183,48 @@ void IdleFunction(void)
 		break;
 
 	}
-	int n=sprintf(buffer,"TPF:%d, Force=%0.3f, Axis:%c, Render:%d, Parallel:%d",tpf,force,axis,render,parallel);
+
+
+ // Calculate & Render Displacement
+
+    /* Parallel Code*/
+
+	if(render==true){
+		if(parallel==true){
+            // Get pointer on GPU
+			if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &size_resources, *resources) !=cudaSuccess)
+				printf("Resource pointer mapping failed...\n");
+
+			CUDAResult = displacement (qo, qdo, Fo, h, eigencount, ns.count, ns.dimensions, &simtime,block_size, cuda_dat, fixed_nodes, ns.fixed_count, maxThreadsBlock);
+		}
+		else{
+    /*Serial Code*/
+	        // Time simulation
+			timespec before, after, tv;
+			clock_gettime(CLOCK_MONOTONIC, &before); // Get time before simulation
+			
+			displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, ns.count-ns.fixed_count, ns.dimensions, ns.count, fixed_nodes, nodes, Psy, nodes_orig);
+		
+			glBindBuffer(GL_ARRAY_BUFFER, BufferId);
+			glBufferSubData(GL_ARRAY_BUFFER,0, BufferSize, nodes);   
+			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
+			glEnableVertexAttribArray(0); 
+			
+			// Copy Old values
+			std::copy(qd,qd+eigencount,qdo);
+			std::copy(q,q+eigencount,qo);
+			clock_gettime(CLOCK_MONOTONIC, &after);
+			tv=diff_time(before,after);
+			simtime=tv.tv_nsec=tv.tv_nsec; // Get time in miliseconds
+			simtime/=1000000;
+		}
+   		std::copy(F,F+((ns.count-ns.fixed_count)*ns.dimensions),Fo);
+
+	}
+	
+	int n=sprintf(buffer,"TPF:%d, SimTime:%0.3fms, Force=%0.3f, Axis:%c, Render:%d, Parallel:%d",tpf,simtime,force,axis,render,parallel);
+
+	// cout<<diff_time(before,after).tv_sec<<":"<<diff_time(before,after).tv_nsec<<endl;
 	glutSetWindowTitle(buffer);
 
 	// Dragging and Rotating
@@ -197,36 +239,8 @@ void RenderFunction(void)
 	// For rotation
 	angle+=deltaAngle;
 	angleX+=deltaAngleX;
+
    
-    // Calculate & Render Displacement
-
-    /* Parallel Code*/
-
-	if(render==true){
-		if(parallel==true){
-            // Get pointer on GPU
-			if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &size_resources, *resources) !=cudaSuccess)
-				printf("Resource pointer mapping failed...\n");
-
-			CUDAResult = displacement (qo, qdo, Fo, h, eigencount, ns.count, ns.dimensions, block_size, cuda_dat, fixed_nodes, ns.fixed_count, maxThreadsBlock);
-		}
-		else{
-    /*Serial Code*/
-
-			displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, ns.count-ns.fixed_count, ns.dimensions, ns.count, fixed_nodes, nodes, Psy, nodes_orig);
-		
-			glBindBuffer(GL_ARRAY_BUFFER, BufferId);
-			glBufferSubData(GL_ARRAY_BUFFER,0, BufferSize, nodes);   
-			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, VertexSize, 0);
-			glEnableVertexAttribArray(0); 
-			
-			// Copy Old values
-			std::copy(qd,qd+eigencount,qdo);
-			std::copy(q,q+eigencount,qo);
-		}
-
-   		std::copy(F,F+((ns.count-ns.fixed_count)*ns.dimensions),Fo);
-	}
 
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -234,12 +248,15 @@ void RenderFunction(void)
 	if(onlyNodes==false){
 		GLM_MVP(ProgramId, ns);
 		glDrawElements(GL_QUADS, es.count*es.nodes, GL_UNSIGNED_SHORT, NULL);
+		GLM_MVP(ProgramId2, ns);
+		glDrawElements(GL_LINES, es.count*es.nodes, GL_UNSIGNED_SHORT, NULL);
 	}
+	else{
+		GLM_MVP(ProgramId2, ns);
+		glPointSize(2.8f);
+		glDrawElements(GL_POINTS, es.count*es.nodes, GL_UNSIGNED_SHORT, NULL);
 
-	GLM_MVP(ProgramId2, ns);
-	glDrawElements(GL_LINES, es.count*es.nodes, GL_UNSIGNED_SHORT, NULL);
-
-    //glDrawElements(GL_LINES, sizeBuffer/sizeof(GLshort), GL_UNSIGNED_SHORT, NULL);
+	}
     
 	glutSwapBuffers();
 	glutPostRedisplay();

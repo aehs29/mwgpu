@@ -28,8 +28,11 @@ __device__ float *d_alphaI, *d_alpha, *d_beta, *d_gamma;
 __device__ 	float *d_u1, *d_u2, *d_u3, *d_u3c, *d_u4, *d_u5, *d_u, *d_uc;
 
 // Calculated vars
-	float *d_qo, *d_qdo, *d_Fo, *d_q, *d_qd, *d_w, *d_wc;
+float *d_qo, *d_qdo, *d_Fo, *d_q, *d_qd, *d_w, *d_wc;
 
+// Time measurement
+cudaEvent_t start;
+cudaEvent_t stop;
 
 __global__ void kInsertZeros(float *Input, float *Output, unsigned int position, unsigned int number, unsigned int numElements) {
 
@@ -484,7 +487,7 @@ extern "C" bool free_GPUnodes(){
 
 
 
-extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, const int block_size, float * buffer, int *fixed_nodes, unsigned int fixed_nodes_count, unsigned int maxThreadsBlock){
+extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, float *simtime, const int block_size, float * buffer, int *fixed_nodes, unsigned int fixed_nodes_count, unsigned int maxThreadsBlock){
 
 /*
 
@@ -518,7 +521,10 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
 
 	// Initialize Printf on CUDA
     cudaPrintfInit ();
-	
+
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start,0);
 
 /*#########---------Allocate variables---------------#########*/
 
@@ -920,6 +926,12 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
         printf("cudaMemcpy (h_qdo,d_qd) returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
+
+	cudaEventRecord(stop,0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(simtime,start,stop);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
 
     // CudaPrintf Stuff
 	cudaPrintfDisplay (stdout, true);

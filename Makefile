@@ -53,7 +53,7 @@ EXTRA_CCFLAGS     ?=
 
 IPATH= -I/usr/include
 LPATH= -L/usr/lib
-LDLIBS = -lglut -lGL -lGLU -lm -lGLEW -g
+LDLIBS = -lglut -lGL -lGLU -lm -lGLEW -lrt -g
 
 
 # OS-specific build flags
