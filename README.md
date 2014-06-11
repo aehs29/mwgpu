@@ -89,6 +89,9 @@ Modal Warping on GPU v1.3.5
 - Simulation now on IdleFunction
 - Separate performance measurement for simulation and rendering
 - Added performance measurement on CUDA and C++
+- Minimized memory transfers on GPU (q-qo,qd-qdo)
+- Added debug/verbose functionality
+
 #######################
 
 TODO:
@@ -106,9 +109,6 @@ CUDA:
 - Should I use SharedMem instead of GlobalMem?
 - Change float64 to float32
 - Coalesced memory comments
-- GpuTimer timer;
-  - timer.Start();
-  - timer.Stop();
 - Use streams for kernel launches
 
 C++:

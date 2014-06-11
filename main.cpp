@@ -88,6 +88,9 @@ static unsigned int fps_frames = 0;
 int tpf;						// Time Per Frame in msec
 float simtime;					// Time measurement of Simulation in msec
 
+// Debug/Verbose mode
+bool debug=false;
+
 
 // Virtual Buffer Objects (VBO's) vars
 size_t BufferSize,VertexSize;
@@ -195,7 +198,7 @@ void IdleFunction(void)
 			if(cudaGraphicsResourceGetMappedPointer((void**)&cuda_dat, &size_resources, *resources) !=cudaSuccess)
 				printf("Resource pointer mapping failed...\n");
 
-			CUDAResult = displacement (qo, qdo, Fo, h, eigencount, ns.count, ns.dimensions, &simtime,block_size, cuda_dat, fixed_nodes, ns.fixed_count, maxThreadsBlock);
+			CUDAResult = displacement (Fo, h, eigencount, ns.count, ns.dimensions, &simtime,block_size, cuda_dat, fixed_nodes, ns.fixed_count, maxThreadsBlock, debug);
 		}
 		else{
     /*Serial Code*/
@@ -466,7 +469,8 @@ void DestroyShaders(void)
 void processNormalKeys(unsigned char key, int x, int y) {
 
 	if (key == 27)				// Escape
-		exit(0);
+		//exit(0);
+		glutLeaveMainLoop();
 	if (key==32){				// Space
 		if(render==true)
 			render=false;
@@ -675,7 +679,7 @@ int main(int argc, char **argv)
 	string ename,nname,kname,eigenvec_name, fixedname, psyname;
 	static char usage[] = "usage: %s -n Node_filename [-p 1 || 0] [-t threadsonGPU] \n";
 
-	while ((c = getopt(argc, argv, "n:p:t:")) != -1)
+	while ((c = getopt(argc, argv, "n:p:t:d:")) != -1)
 		switch (c) {
 		case 'n':
 			nflag = 1;
@@ -708,6 +712,9 @@ int main(int argc, char **argv)
 			break;
         case 't':
 			maxThreadsBlock=atoi(optarg);
+			break;
+		case 'd':
+			istringstream(optarg) >> debug;
 			break;
 		}
 	if (nflag == 0) 
@@ -905,6 +912,6 @@ int main(int argc, char **argv)
 
 /*#########---------Free Memory---------------#########*/
 
-	return 1;
+	return 0;
 
 }

@@ -28,7 +28,7 @@ __device__ float *d_alphaI, *d_alpha, *d_beta, *d_gamma;
 __device__ 	float *d_u1, *d_u2, *d_u3, *d_u3c, *d_u4, *d_u5, *d_u, *d_uc;
 
 // Calculated vars
-float *d_qo, *d_qdo, *d_Fo, *d_q, *d_qd, *d_w, *d_wc;
+float *d_qo, *d_qdo, *d_Fo, *d_w, *d_wc;
 
 // Time measurement
 cudaEvent_t start;
@@ -374,17 +374,6 @@ extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, f
         exit(EXIT_FAILURE);
     }
 
-    error = cudaMalloc((void **) &d_qd, mem_size_q);
-	if (error != cudaSuccess){
-        printf("cudaMalloc d_qd returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-	}
-
-    error = cudaMalloc((void **) &d_q, mem_size_q);
-	if (error != cudaSuccess){
-        printf("cudaMalloc d_q returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-	}
 	error = cudaMalloc((void **) &d_uc, mem_size_nodes);
 	if (error != cudaSuccess){
         printf("cudaMalloc d_uc returned error code %d, line(%d)\n", error, __LINE__);
@@ -457,6 +446,10 @@ extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, f
         printf("cudaMemcpy (d_Phi,h_eigenVecs) returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
+
+	cudaMemset(d_qo,0,mem_size_q);
+	cudaMemset(d_qdo,0,mem_size_q);
+
 }
 
 extern "C" bool free_GPUnodes(){
@@ -479,15 +472,13 @@ extern "C" bool free_GPUnodes(){
 	cudaFree(d_Fo);
 	cudaFree(d_u);
 	cudaFree(d_uc);
-	cudaFree(d_q);
-	cudaFree(d_qd);
 	cudaFree(d_w);
 	return true;
 }
 
 
 
-extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, float *simtime, const int block_size, float * buffer, int *fixed_nodes, unsigned int fixed_nodes_count, unsigned int maxThreadsBlock){
+extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, unsigned int node_count, unsigned int node_dimensions, float *simtime, const int block_size, float *buffer, int *fixed_nodes, unsigned int fixed_nodes_count, unsigned int maxThreadsBlock, bool debug){
 
 /*
 
@@ -522,9 +513,11 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
 	// Initialize Printf on CUDA
     cudaPrintfInit ();
 
+	// Create and start timers
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);
 	cudaEventRecord(start,0);
+	float tmpTime,totTime=0;
 
 /*#########---------Allocate variables---------------#########*/
 
@@ -533,13 +526,13 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
 	unsigned int size_eigen = eigencount;
 	unsigned int size_fixed = fixed_nodes_count * node_dimensions;
 	unsigned int size_freenodes = size_nodes-size_fixed;
-	unsigned int mem_size_q = sizeof(float) * size_eigen;
+	// unsigned int mem_size_q = sizeof(float) * size_eigen;
 	unsigned int mem_size_F = sizeof(float) * (size_nodes-size_fixed);
 	unsigned int mem_size_Phi = sizeof(float) * ((size_nodes-size_fixed)*size_eigen);
 	unsigned int mem_size_freenodes = size_freenodes * sizeof(float);
 
 	// Number of zeros to insert in u array
-	unsigned int numZeros = fixed_nodes_count *3;
+	// unsigned int numZeros = fixed_nodes_count *3;
 
     // Error code to check return values for CUDA calls
     cudaError_t error;
@@ -554,24 +547,19 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
 	// # Threads to be used in kernels
 	unsigned int threadsPB= maxThreadsBlock;
 
+	// Time measure for debugging
+	if(debug==true){
+
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"Initial declaration:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
+
 
 /*#########---------Host-to-Device Memory copy---------------#########*/ 
-
-    error = cudaMemcpy(d_qo, h_qo, mem_size_q, cudaMemcpyHostToDevice);
-
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (d_qo,h_qo) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
-   
-    error = cudaMemcpy(d_qdo, h_qdo, mem_size_q, cudaMemcpyHostToDevice);
-
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (d_qdo,h_qdo) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
    
     error = cudaMemcpy(d_Fo, h_Fo, mem_size_F, cudaMemcpyHostToDevice);
 
@@ -582,6 +570,16 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
     }
        
 /*#########---------Host-to-Device Memory copy---------------#########*/ 
+
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"Host2Device MemCpy:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 
 
 /*#########---------Get qd---------------#########*/
@@ -605,6 +603,16 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
         exit(EXIT_FAILURE);
     }
 
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"qd - Part 1:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
+
 //--------------------Second Part-------------------	
 
 	// Second part
@@ -621,8 +629,15 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
         fprintf(stderr, "Failed to launch MatByVec kernel (u2) (error code %s)!\n", cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
-
-	
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"qd - Part 2:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 //-------------------------Third Part .1 --------------------------	
 
 
@@ -682,8 +697,15 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
         fprintf(stderr, "Failed to launch matrixTranspose kernel (u3) (error code %s)!\n", cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
-
-
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"qd - Part 3^T:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 //------------------------Third part .3-----------------------------
 	// Third part .3
 	// eigencount x 1
@@ -699,6 +721,15 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
         exit(EXIT_FAILURE);
     }
 
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"qd - Part 3 - Mult:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 //-----------------------Part 4-----------------------
 	// eigencount x 1
     // u5 = gama*u4
@@ -731,7 +762,7 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
     }
 
 	// Arguments: Vector1, Vector2, VectorResult,  # of Elements
-	kVectorAdd<<< blocksPerGrid, threadsPerBlock>>>(d_u1, d_u2, d_qd, eigencount);
+	kVectorAdd<<< blocksPerGrid, threadsPerBlock>>>(d_u1, d_u2, d_qdo, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -743,7 +774,7 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
 	// qd=u1*1/h
 
 	// Arguments: vector, scalar, # elements
-    kVectorScalar<<< blocksPerGrid, threadsPerBlock>>>(d_qd, 1/h_h,  eigencount);
+    kVectorScalar<<< blocksPerGrid, threadsPerBlock>>>(d_qdo, 1/h_h,  eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -751,6 +782,15 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
         exit(EXIT_FAILURE);
     }
 
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"qd - Part 4:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 
 /*#########---------Ends Get qd---------------#########*/
 
@@ -771,15 +811,22 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
         fprintf(stderr, "Failed to launch MatByVec kernel (u1.q) (error code %s)!\n", cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
-
-
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"q - Part 1:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 	// Second part
 	// eigenC x 1
 	// q=u1+u2
     // Same kernel parameters
 
 	// Arguments: Vector1, Vector2, VectorResult,  # of Elements
-	kVectorAdd<<< blocksPerGrid, threadsPerBlock>>>(d_u1, d_u2, d_q, eigencount);
+	kVectorAdd<<< blocksPerGrid, threadsPerBlock>>>(d_u1, d_u2, d_qo, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -787,6 +834,15 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
         exit(EXIT_FAILURE);
     }
 
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"q - Part 2:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 	
 /*#########---------Ends Get q---------------#########*/
 
@@ -798,7 +854,7 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
 	blocksPerGrid=(size_nodes-size_fixed + threadsPB - 1) / threadsPB;
 
 	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
-	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_Phi, d_q, d_u, size_nodes-size_fixed, eigencount);
+	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_Phi, d_qo, d_u, size_nodes-size_fixed, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -806,6 +862,15 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
         exit(EXIT_FAILURE);
     }
 
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"u - Calculation:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 
 /*#########---------Ends Calculate u---------------#########*/
 
@@ -815,19 +880,28 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
 	// u=Phi *q
 
 	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
-	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_Psy, d_q, d_w, size_nodes-size_fixed, eigencount);
+	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_Psy, d_qo, d_w, size_nodes-size_fixed, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
         fprintf(stderr, "Failed to launch MatByVec kernel (u) (error code %s)!\n", cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
-
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"w - Calculation:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 
 /*#########---------Ends Calculate w---------------#########*/
 
 
 /*#########---------Compute R for every node and modify u---------------#########*/
+
 
 	error = cudaMemcpy(d_uc, d_u, mem_size_freenodes, cudaMemcpyDeviceToDevice);
 
@@ -845,6 +919,15 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
 		exit(EXIT_FAILURE);
 	}
 
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"R - Calculation:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 
 /*#########---------Ends Compute R---------------#########*/
 
@@ -887,7 +970,15 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
         fprintf(stderr, "Failed to copy output from device to host (error code %s)!\n", cudaGetErrorString(error));
         exit(EXIT_FAILURE);
     }
-
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"Insert Zeros:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 /*#########---------Ends Insert Zeros---------------#########*/
 
 
@@ -904,35 +995,31 @@ extern "C" bool displacement (float *h_qo, float *h_qdo, float *h_Fo, float h_h,
 		fprintf(stderr, "Failed to launch ModBuffer kernel (error code %s)!\n", cudaGetErrorString(error));
 		exit(EXIT_FAILURE);
 	}
-
+	// Time measure for debugging
+	if(debug==true){
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&tmpTime,start,stop);
+		totTime+=tmpTime;
+		std::cout<<"Modify Buffer:\t"<<tmpTime<<"\n";
+		cudaEventRecord(start,0);
+	}
 /*#########---------Render on OpenGL---------------#########*/
 
-
-/*#########---------Free Memory---------------#########*/
-	// Copy result from device to host
-
-    error = cudaMemcpy(h_qo, d_q, mem_size_q, cudaMemcpyDeviceToHost);
-
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (h_qo,d_q) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
-
-    error = cudaMemcpy(h_qdo, d_qd, mem_size_q, cudaMemcpyDeviceToHost);
-
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (h_qdo,d_qd) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
-
-	cudaEventRecord(stop,0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(simtime,start,stop);
-	cudaEventDestroy(start);
-	cudaEventDestroy(stop);
-
+	// Time measure for debugging
+	if(debug==true){
+		*simtime=totTime;
+		cudaEventDestroy(start);
+		cudaEventDestroy(stop);
+		std::cout<<"Total Simulation Time:\t"<<totTime<<"\n\n\n";
+	}
+	else{
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(simtime,start,stop);
+		cudaEventDestroy(start);
+		cudaEventDestroy(stop);
+	}
     // CudaPrintf Stuff
 	cudaPrintfDisplay (stdout, true);
     cudaPrintfEnd ();
