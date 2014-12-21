@@ -183,7 +183,7 @@ void computeR(float *w, unsigned int nodes_original, float *u){
 
 }
 
-void displacement_serial(float *q, float *qo, float *qd, float *qdo, float *F, float *Fo, float *R, float *Ro, float *alpha, float *alphaI, float *beta, float *gama, float *Phi, float *u, float h, unsigned int eigencount, unsigned int nodes_not_fixed, unsigned int node_dimensions, unsigned int nodes_original, int *fixed_nodes, float *nodes, float *Psy, float *nodes_orig){
+void displacement_serial(float *q, float *qo, float *qd, float *qdo, float *F, float *Fo, float *R, float *Ro, float *alpha, float *alphaI, float *beta, float *gama, float *Phi, float *u, float h, unsigned int eigencount, unsigned int nodes_not_fixed, unsigned int node_dimensions, unsigned int nodes_original, int *fixed_nodes, float *nodes, float *Psi, float *nodes_orig){
 
 /*
 
@@ -279,8 +279,8 @@ Phi:  (node_count x node_dimensions) x eigencount
 	vectorAdd(u1, u2, q, size_eigen);
 
     // Calculate w
-	// w=Psy*q
-	matrixByVec(Psy,q,w,size_nodes,eigencount);
+	// w=Psi*q
+	matrixByVec(Psi,q,w,size_nodes,eigencount);
 
 
 	// Calculate u
@@ -309,6 +309,7 @@ Phi:  (node_count x node_dimensions) x eigencount
 
 	// Add u
 	vectorAdd(u, nodes_orig, nodes, size_nodes_orig);
+
 	// Free Memory
 	free(u1);
 	free(u2);

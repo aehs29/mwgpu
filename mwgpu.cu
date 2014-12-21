@@ -19,13 +19,13 @@
 __device__ float *d_original_nodes;
 
 // Matrices
-__device__ float *d_Phi, *d_Psy;
+__device__ float *d_Phi, *d_Psi;
 
 // Coefficient Matrices
 __device__ float *d_alphaI, *d_alpha, *d_beta, *d_gamma;
 
 // u's
-__device__ 	float *d_u1, *d_u2, *d_u3, *d_u3c, *d_u4, *d_u5, *d_u, *d_uc;
+__device__ 	float *d_u1, *d_u2, *d_PhiT, *d_u4, *d_u5, *d_u, *d_uc;
 
 // Calculated vars
 float *d_qo, *d_qdo, *d_Fo, *d_w, *d_wc;
@@ -232,12 +232,20 @@ __global__ void kMatrixTranspose(float *A, float *B, int rows, int cols)
 }
 
 
-__global__ void kMatVector(float *mat, float *vec, float *res, unsigned int RowsMat, unsigned int ColsMat) {
+__global__ void kMatVector(float *mat, float *vec, float *res, unsigned int RowsMat, const unsigned int ColsMat) {
 	float c = 0;
 	//i is element in C to be computed
 	int i = blockDim.x * blockIdx.x + threadIdx.x;
 
+	
 	if(i > RowsMat) return;
+
+	// extern __shared__ float vecsh[];
+	//  for(int j=0;j<ColsMat;j++){
+	//  	vecsh[j]=vec[j];
+	//  }
+
+	//  __syncthreads();
 
 	for(int j=0;j<ColsMat;j++){
 		c += mat[i*ColsMat+j]*vec[j];
@@ -252,7 +260,9 @@ __global__ void kModBuffer(float *buffer, float *d_nodes,  float *u, unsigned in
 	const unsigned int BDIM = blockDim.x;
 
 	unsigned int index=BDIM*BID+TID;
-	if(index>totalThreads)
+	
+
+ 	if(index>totalThreads)
 		return;
 	// Add displacement to original nodes
 	buffer[index]=d_nodes[index]+u[index];
@@ -268,7 +278,7 @@ extern "C" void map_Texture(void *cuda_dat, size_t siz,cudaGraphicsResource *res
 
 
 
-extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, float *h_beta, float *h_gamma, float *h_eigenVecs, float *h_Psy, int node_count, int node_dimensions, int fixed_nodes_count,  int eigencount)
+extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, float *h_beta, float *h_gamma, float *h_eigenVecs, float *h_Psi,int node_count, int node_dimensions, int fixed_nodes_count,  int eigencount)
 {
 	unsigned int size_nodes = node_count * node_dimensions;
 	unsigned int size_fixed = fixed_nodes_count * node_dimensions;
@@ -282,6 +292,12 @@ extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, f
     cudaError_t error;
  
 /*#########---------Device Memory Allocation---------------#########*/ 
+	
+	// error = cudaHostRegister(h_F, mem_size_F, cudaHostRegisterMapped);
+	// if (error != cudaSuccess){
+	// 	printf("cudaHostRegister h_F returned error code %d, line(%d)\n", error, __LINE__);
+    //     exit(EXIT_FAILURE);
+    // }
 	error = cudaMalloc((void **) &d_original_nodes, mem_size_nodes);
 	if (error != cudaSuccess){
         printf("cudaMalloc d_u returned error code %d, line(%d)\n", error, __LINE__);
@@ -315,9 +331,9 @@ extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, f
         exit(EXIT_FAILURE);
     }
 
-	error = cudaMalloc((void **) &d_Psy, mem_size_Phi);
+	error = cudaMalloc((void **) &d_Psi, mem_size_Phi);
 	if (error != cudaSuccess){
-        printf("cudaMalloc d_Psy returned error code %d, line(%d)\n", error, __LINE__);
+        printf("cudaMalloc d_Psi returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
 
@@ -331,14 +347,9 @@ extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, f
         printf("cudaMalloc d_u2 returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
-    error = cudaMalloc((void **) &d_u3, mem_size_Phi);
+	error = cudaMalloc((void **) &d_PhiT, mem_size_Phi);
 	if (error != cudaSuccess){
-        printf("cudaMalloc d_u3 returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
-	error = cudaMalloc((void **) &d_u3c, mem_size_Phi);
-	if (error != cudaSuccess){
-        printf("cudaMalloc d_u3c returned error code %d, line(%d)\n", error, __LINE__);
+        printf("cudaMalloc d_PhiT returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
     error = cudaMalloc((void **) &d_u4, mem_size_q);
@@ -363,11 +374,7 @@ extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, f
         exit(EXIT_FAILURE);
     }   
 
-    error = cudaMalloc((void **) &d_Fo, mem_size_F);
-	if (error != cudaSuccess){
-        printf("cudaMalloc d_Fo returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
+   
     error = cudaMalloc((void **) &d_u, mem_size_nodes);
 	if (error != cudaSuccess){
         printf("cudaMalloc d_u returned error code %d, line(%d)\n", error, __LINE__);
@@ -389,6 +396,11 @@ extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, f
 	error = cudaMalloc((void **) &d_wc, mem_size_nodes);
 	if (error != cudaSuccess){
         printf("cudaMalloc d_wc returned error code %d, line(%d)\n", error, __LINE__);
+        exit(EXIT_FAILURE);
+    }
+	error = cudaMalloc((void **) &d_Fo, mem_size_F);
+	if (error != cudaSuccess){
+        printf("cudaMalloc d_Fo returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
 /*#########---------Device Memory Allocation---------------#########*/ 
@@ -439,7 +451,7 @@ extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, f
         printf("cudaMemcpy (d_Phi,h_eigenVecs) returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
-	error = cudaMemcpy(d_Psy, h_Psy, mem_size_Phi, cudaMemcpyHostToDevice);
+	error = cudaMemcpy(d_Psi, h_Psi, mem_size_Phi, cudaMemcpyHostToDevice);
 
     if (error != cudaSuccess)
     {
@@ -449,6 +461,37 @@ extern "C" void allocate_GPUmem(float *nodes, float *h_alphaI, float *h_alpha, f
 
 	cudaMemset(d_qo,0,mem_size_q);
 	cudaMemset(d_qdo,0,mem_size_q);
+
+    // Third part .2
+	// eigencount x (node_count x node_dimensions)
+    // u3 = Transpose(u3)
+
+	unsigned int threadsPB= 512;
+
+	// Make a copy of u3 to transpose it
+	// error = cudaMemcpy(d_PhiT, d_Phi, mem_size_Phi, cudaMemcpyDeviceToDevice);
+    if (error != cudaSuccess)
+    {
+        printf("cudaMemcpy (d_u3c,d_u3) returned error code %d, line(%d)\n", error, __LINE__);
+        exit(EXIT_FAILURE);
+    }
+
+
+	// New kernel parameters
+	unsigned int numElements = (size_nodes-size_fixed)*eigencount;
+
+	dim3 blocksPerGrid((numElements + threadsPB - 1) / threadsPB);
+	dim3 threadsPerBlock(threadsPB);
+
+	// Arguments: Result, Original, # Elements in Matrix
+    kMatrixTranspose<<< blocksPerGrid, threadsPerBlock>>>(d_PhiT,d_Phi, size_nodes-size_fixed, eigencount);
+    error = cudaGetLastError();
+    if (error != cudaSuccess)
+    {
+        fprintf(stderr, "Failed to launch matrixTranspose kernel (error code %s)!\n", cudaGetErrorString(error));
+        exit(EXIT_FAILURE);
+    }
+
 
 }
 
@@ -460,11 +503,10 @@ extern "C" bool free_GPUnodes(){
 	cudaFree(d_beta);
 	cudaFree(d_gamma);
 	cudaFree(d_Phi);
-	cudaFree(d_Psy);
+	cudaFree(d_Psi);
 	cudaFree(d_u1);
 	cudaFree(d_u2);
-	cudaFree(d_u3);
-	cudaFree(d_u3c);
+	cudaFree(d_PhiT);
 	cudaFree(d_u4);
 	cudaFree(d_u5);
 	cudaFree(d_qo);
@@ -494,7 +536,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 
   NewPhi:  (node_count*node_dimensions)-(FixedNodes_count*node_dimensions) x eigencount
 
-  Psy: Same as NewPhi
+  Psi: Same as NewPhi
 
   w: same as u
 
@@ -523,16 +565,13 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 
 	// Get size for pointers
 	unsigned int size_nodes = node_count * node_dimensions;
-	unsigned int size_eigen = eigencount;
+	// unsigned int size_eigen = eigencount;
 	unsigned int size_fixed = fixed_nodes_count * node_dimensions;
 	unsigned int size_freenodes = size_nodes-size_fixed;
 	// unsigned int mem_size_q = sizeof(float) * size_eigen;
 	unsigned int mem_size_F = sizeof(float) * (size_nodes-size_fixed);
-	unsigned int mem_size_Phi = sizeof(float) * ((size_nodes-size_fixed)*size_eigen);
+	// unsigned int mem_size_Phi = sizeof(float) * ((size_nodes-size_fixed)*size_eigen);
 	unsigned int mem_size_freenodes = size_freenodes * sizeof(float);
-
-	// Number of zeros to insert in u array
-	// unsigned int numZeros = fixed_nodes_count *3;
 
     // Error code to check return values for CUDA calls
     cudaError_t error;
@@ -547,6 +586,21 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 	// # Threads to be used in kernels
 	unsigned int threadsPB= maxThreadsBlock;
 
+	// cudaStream_t s1,s2,s3;
+	// cudaStreamCreate(&s1);
+	// cudaStreamCreate(&s2);
+	// cudaStreamCreate(&s3);
+
+	int nstreams= 3;
+   // allocate and initialize an array of stream handles
+    cudaStream_t *streams = (cudaStream_t *) malloc(nstreams * sizeof(cudaStream_t));
+
+    for (int i = 0; i < nstreams; i++)
+    {   
+        checkCudaErrors(cudaStreamCreate(&(streams[i])));
+    }   
+
+
 	// Time measure for debugging
 	if(debug==true){
 
@@ -558,9 +612,9 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 		cudaEventRecord(start,0);
 	}
 
-
 /*#########---------Host-to-Device Memory copy---------------#########*/ 
    
+    // error = cudaMemcpyAsync(d_Fo, h_Fo, mem_size_F, cudaMemcpyHostToDevice);
     error = cudaMemcpy(d_Fo, h_Fo, mem_size_F, cudaMemcpyHostToDevice);
 
     if (error != cudaSuccess)
@@ -568,7 +622,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
         printf("cudaMemcpy (d_Fo,h_Fo) returned error code %d, line(%d)\n", error, __LINE__);
         exit(EXIT_FAILURE);
     }
-       
+	// cudaStreamDestroy(s1);
 /*#########---------Host-to-Device Memory copy---------------#########*/ 
 
 	// Time measure for debugging
@@ -595,7 +649,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 	dim3 blocksPerGrid(BPG);
 
 	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
-	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_alphaI, d_qo, d_u1, eigencount, eigencount);
+	kMatVector<<< blocksPerGrid, threadsPerBlock,0,streams[0]>>>(d_alphaI, d_qo, d_u1, eigencount, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -622,7 +676,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 	// Same kernel parameters as for u1
 
 	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
-	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_beta, d_qdo, d_u2, eigencount, eigencount);
+	kMatVector<<< blocksPerGrid, threadsPerBlock,0,streams[1]>>>(d_beta, d_qdo, d_u2, eigencount, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -639,73 +693,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 		cudaEventRecord(start,0);
 	}
 //-------------------------Third Part .1 --------------------------	
-
-
-
-	// Very OLD code - Need it later
-
-	// Third part should be in a different variable to use it again on q
-
-	// Third part .1
-	// (node_count x node_dimensions) x eigencount
-    // u3 = (Ro*Phi)
-
-// 	unsigned int ColsB, RowsA;
-// 	ColsB=eigencount;
-// 	RowsA=size_nodes;
-
-// 	// Different variables than MatByVec kernel
-//     dim3 threads(block_size, block_size);
-//     dim3 grid((ColsB+threads.x-1) / threads.x, (RowsA+threads.y-1) / threads.y);
-// // Exec kernel
-// 	kMatrixMult<16><<< grid, threads >>>(d_Ro, d_Phi, d_u3, size_nodes,size_nodes, size_nodes, size_eigen);
-// 	    error = cudaGetLastError();
-//     if (error != cudaSuccess)
-//     {
-//         fprintf(stderr, "Failed to launch matrixMult kernel (u3) (error code %s)!\n", cudaGetErrorString(error));
-//         exit(EXIT_FAILURE);
-//     }
-
-	// FOR NOW U3=Phi
-	//d_u3=d_Phi;
-
-
-//-------------------------Third Part .2-----------------------------
-
-	// Third part .2
-	// eigencount x (node_count x node_dimensions)
-    // u3 = Transpose(u3)
-
-	// Make a copy of u3 to transpose it
-	error = cudaMemcpy(d_u3c, d_Phi, mem_size_Phi, cudaMemcpyDeviceToDevice);
-    if (error != cudaSuccess)
-    {
-        printf("cudaMemcpy (d_u3c,d_u3) returned error code %d, line(%d)\n", error, __LINE__);
-        exit(EXIT_FAILURE);
-    }
-
-
-	// New kernel parameters
-	unsigned int numElements = (size_nodes-size_fixed)*size_eigen;
-	blocksPerGrid=(numElements + threadsPB - 1) / threadsPB;
-
-	// Arguments: Result, Original, # Elements in Matrix
-    kMatrixTranspose<<< blocksPerGrid, threadsPerBlock>>>(d_u3,d_u3c, size_nodes-size_fixed, size_eigen);
-    error = cudaGetLastError();
-    if (error != cudaSuccess)
-    {
-        fprintf(stderr, "Failed to launch matrixTranspose kernel (u3) (error code %s)!\n", cudaGetErrorString(error));
-        exit(EXIT_FAILURE);
-    }
-	// Time measure for debugging
-	if(debug==true){
-		cudaEventRecord(stop,0);
-		cudaEventSynchronize(stop);
-		cudaEventElapsedTime(&tmpTime,start,stop);
-		totTime+=tmpTime;
-		std::cout<<"qd - Part 3^T:\t"<<tmpTime<<"\n";
-		cudaEventRecord(start,0);
-	}
+   
 //------------------------Third part .3-----------------------------
 	// Third part .3
 	// eigencount x 1
@@ -713,7 +701,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 	blocksPerGrid=(eigencount + threadsPB - 1) / threadsPB;
 
 	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
-	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_u3, d_Fo, d_u4, eigencount, size_nodes-size_fixed);
+	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_PhiT, d_Fo, d_u4, eigencount, size_nodes-size_fixed);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -774,7 +762,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 	// qd=u1*1/h
 
 	// Arguments: vector, scalar, # elements
-    kVectorScalar<<< blocksPerGrid, threadsPerBlock>>>(d_qdo, 1/h_h,  eigencount);
+    kVectorScalar<<< blocksPerGrid, threadsPerBlock,0,streams[2]>>>(d_qdo, 1/h_h,  eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -804,7 +792,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 	// Same parameters as other kernels
 
 	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
-	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_alpha, d_qo, d_u1, eigencount, eigencount);
+	kMatVector<<< blocksPerGrid, threadsPerBlock,0,streams[0]>>>(d_alpha, d_qo, d_u1, eigencount, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -854,7 +842,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 	blocksPerGrid=(size_nodes-size_fixed + threadsPB - 1) / threadsPB;
 
 	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
-	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_Phi, d_qo, d_u, size_nodes-size_fixed, eigencount);
+	kMatVector<<< blocksPerGrid, threadsPerBlock,0,streams[0]>>>(d_Phi, d_qo, d_u, size_nodes-size_fixed, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -877,10 +865,10 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 /*#########---------Calculate w---------------#########*/
 
 	//   (node_count x node_dimensions) x 1
-	// u=Phi *q
+	// u=Psi *q
 
 	// Arguments: Matrix, Vector, Result, RowsMatrix, ColsMatrix
-	kMatVector<<< blocksPerGrid, threadsPerBlock>>>(d_Psy, d_qo, d_w, size_nodes-size_fixed, eigencount);
+	kMatVector<<< blocksPerGrid, threadsPerBlock,0,streams[1]>>>(d_Psi, d_qo, d_w, size_nodes-size_fixed, eigencount);
     error = cudaGetLastError();
     if (error != cudaSuccess)
     {
@@ -901,7 +889,6 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 
 
 /*#########---------Compute R for every node and modify u---------------#########*/
-
 
 	error = cudaMemcpy(d_uc, d_u, mem_size_freenodes, cudaMemcpyDeviceToDevice);
 
@@ -984,6 +971,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 
 /*#########---------Render on OpenGL---------------#########*/
 
+	
 	blocksPerGrid = 1+(warps/warpsBlock);
 
 	kModBuffer<<< blocksPerGrid, threadsPerBlock >>>(buffer, d_original_nodes, d_u, size_nodes);
@@ -995,6 +983,7 @@ extern "C" bool displacement (float *h_Fo, float h_h, unsigned int eigencount, u
 		fprintf(stderr, "Failed to launch ModBuffer kernel (error code %s)!\n", cudaGetErrorString(error));
 		exit(EXIT_FAILURE);
 	}
+
 	// Time measure for debugging
 	if(debug==true){
 		cudaEventRecord(stop,0);

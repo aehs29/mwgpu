@@ -6,11 +6,11 @@ using namespace std;
 // Arrays from files
 float *nodes;
 float *nodes_orig;				// For serial code
-GLshort *elem;
+GLushort *elem;
 float *eigenVals;
 float *eigenVecs;
 int *fixed_nodes;
-float *Psy;
+float *Psi;
 
 
 // Declare Coefficients 
@@ -33,10 +33,8 @@ elem_struct es;
 int node_init_index;
 
 // ToRenderOrNotToRender?, thats the question
+// bool render=false;
 bool render=false;
-
-// Old coloring
-float red=1.0f, blue=0.0f, green=0.0f;
 
 // OpenGL rotating variables
 float angle = 0.0f;
@@ -47,10 +45,8 @@ float angleX = 0.0f;
 float deltaAngleX = 0.0f;
 int yOrigin=-1;
 
-
 // OpenGL Zoom
 float zoom=-5.0;
-
 
 // OpenGL "Dragging"
 float posX=0.0, posY =0.0;
@@ -62,14 +58,14 @@ int buttonn=0;
 float force=0.04;
 bool force_changed=false;
 float force_constant=0.01;
-int force_axis=1;				// Y axis
+int force_axis=1;				// Default to Y axis
 
 // CUDA resources for buffer on GPU
 cudaGraphicsResource *resources[1];
 size_t size_resources;
 float *cuda_dat = NULL;			// Pointer to map resources
 
-bool CUDAResult;
+bool CUDAResult;				// No Error on CUDA functions
 
 // GLUT vars
 int CurrentWidth = 800,
@@ -90,6 +86,8 @@ float simtime;					// Time measurement of Simulation in msec
 
 // Debug/Verbose mode
 bool debug=false;
+std::string logname="log";
+vector<string> lines;
 
 
 // Virtual Buffer Objects (VBO's) vars
@@ -103,14 +101,15 @@ GLuint
 	ProgramId2,
 	VaoId,
 	BufferId,
-	IndexBufferId[2],
+	IndexBufferId,
 	ActiveIndexBuffer = 0;
 
 // GLSL variables
 GLint uniform_mvp;
 GLint attribute_coord3d, attribute_v_color;
 
-
+// ObjFiles
+string obj_Filename;
 
 void GLM_MVP(GLuint pId, nodes_struct ns){
 // GLM Matrices
@@ -127,10 +126,10 @@ void GLM_MVP(GLuint pId, nodes_struct ns){
 	// Lookat(eye,center,up) = position of cam, camera pointed to, top of the camera (tilted)
 	glm::mat4 view = glm::lookAt(glm::vec3(ns.center_x,ns.center_y, ns.center_z), glm::vec3(ns.center_x+posX, ns.center_y+posY, ns.center_z -3.0), glm::vec3(0.0, 1.0, 0.0));
 	// Perspective
-	glm::mat4 projection = glm::perspective(45.0f, 1.0f*CurrentWidth/CurrentHeight, 0.1f, 100.0f);
+	glm::mat4 projection = glm::perspective(45.0f, 1.0f*CurrentWidth/CurrentHeight, 0.1f, 1000.0f);
 
 	// Calculate result
-	glm::mat4 mvp = projection * view * model * anim * animy* model2;
+	glm::mat4 mvp = projection * view * model * anim * animy * model2;
 
 	glUseProgram(pId);
 	// glUseProgram(ProgramId2);
@@ -159,7 +158,6 @@ void IdleFunction(void)
    	fps_frames++;
     int delta_t = glutGet(GLUT_ELAPSED_TIME) - fps_start;
     if (delta_t > 1000) {
-		// cout << delta_t / fps_frames << endl;
 		tpf=delta_t / fps_frames;
 		fps_frames = 0;
 		fps_start = glutGet(GLUT_ELAPSED_TIME);
@@ -206,7 +204,7 @@ void IdleFunction(void)
 			timespec before, after, tv;
 			clock_gettime(CLOCK_MONOTONIC, &before); // Get time before simulation
 			
-			displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, ns.count-ns.fixed_count, ns.dimensions, ns.count, fixed_nodes, nodes, Psy, nodes_orig);
+			displacement_serial(q, qo,qd, qdo, F, Fo, R, Ro, alpha, alphaI, beta, gama, eigenVecs, u, h, eigencount, ns.count-ns.fixed_count, ns.dimensions, ns.count, fixed_nodes, nodes, Psi, nodes_orig);
 		
 			glBindBuffer(GL_ARRAY_BUFFER, BufferId);
 			glBufferSubData(GL_ARRAY_BUFFER,0, BufferSize, nodes);   
@@ -222,12 +220,11 @@ void IdleFunction(void)
 			simtime/=1000000;
 		}
    		std::copy(F,F+((ns.count-ns.fixed_count)*ns.dimensions),Fo);
-
 	}
 	
 	int n=sprintf(buffer,"TPF:%d, SimTime:%0.3fms, Force=%0.3f, Axis:%c, Render:%d, Parallel:%d",tpf,simtime,force,axis,render,parallel);
 
-	// cout<<diff_time(before,after).tv_sec<<":"<<diff_time(before,after).tv_nsec<<endl;
+	// Set new title
 	glutSetWindowTitle(buffer);
 
 	// Dragging and Rotating
@@ -243,10 +240,7 @@ void RenderFunction(void)
 	angle+=deltaAngle;
 	angleX+=deltaAngleX;
 
-   
-
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
 	
 	if(onlyNodes==false){
 		GLM_MVP(ProgramId, ns);
@@ -258,7 +252,6 @@ void RenderFunction(void)
 		GLM_MVP(ProgramId2, ns);
 		glPointSize(2.8f);
 		glDrawElements(GL_POINTS, es.count*es.nodes, GL_UNSIGNED_SHORT, NULL);
-
 	}
     
 	glutSwapBuffers();
@@ -269,14 +262,14 @@ void CreateVBO_CUDA(void)
 {
 
     // Sizes
-	BufferSize = sizeof(float)*ns.count*ns.dimensions; // 544: 32 per element on sphere
-	VertexSize = sizeof(nodes[0])*ns.dimensions; // Square: 12: 4 bytes (float) * node_dimension (3) on sphere
+	BufferSize = sizeof(float)*ns.count*ns.dimensions;
+	VertexSize = sizeof(nodes[0])*ns.dimensions;
 	
 	// Declare VertexA
 	glGenVertexArrays(1, &VaoId);
 	glBindVertexArray(VaoId);
 	
-	// Nodes Buffer
+	// Nodes Vertex Buffer Objects
 	glGenBuffers(1, &BufferId);
 	glBindBuffer(GL_ARRAY_BUFFER, BufferId);
 	glBufferData(GL_ARRAY_BUFFER, BufferSize, nodes, GL_DYNAMIC_DRAW);
@@ -288,10 +281,13 @@ void CreateVBO_CUDA(void)
 	glEnableVertexAttribArray(1);
 
 
- 	// Element Buffer
-	glGenBuffers(2, IndexBufferId);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),elem, GL_STATIC_DRAW);
+ 	// Element Buffer Objects
+	glGenBuffers(1, &IndexBufferId);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId);
+	// glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),elem, GL_STATIC_DRAW);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),NULL, GL_STATIC_READ);
+	glBufferSubData(GL_ELEMENT_ARRAY_BUFFER,0,es.count*es.nodes*sizeof(elem)/2,elem);
+	glBufferSubData(GL_ELEMENT_ARRAY_BUFFER,es.count*es.nodes*sizeof(elem)/2,es.count*es.nodes*sizeof(elem)/2,&elem[es.count*es.nodes/2]);
 
     // Register Pixel Buffer Object as CUDA graphics resource
 	cudaGraphicsGLRegisterBuffer(resources, BufferId, cudaGraphicsMapFlagsNone);
@@ -305,14 +301,15 @@ void CreateVBO(void)
 {
 
     // Sizes
-	BufferSize = sizeof(float)*ns.count*ns.dimensions; // 544: 32 per element on sphere
-	VertexSize = sizeof(nodes[0])*ns.dimensions; // Square: 12: 4 bytes (float) * node_dimension (3) on sphere
+	BufferSize = sizeof(float)*ns.count*ns.dimensions;
+	VertexSize = sizeof(nodes[0])*ns.dimensions;
 	
+
 	// Declare VertexA
 	glGenVertexArrays(1, &VaoId);
 	glBindVertexArray(VaoId);
 	
-	// Nodes Buffer
+	// Nodes Vertex Buffer Objects
 	glGenBuffers(1, &BufferId);
 	glBindBuffer(GL_ARRAY_BUFFER, BufferId);
 	glBufferData(GL_ARRAY_BUFFER, BufferSize, nodes, GL_DYNAMIC_DRAW);
@@ -323,11 +320,13 @@ void CreateVBO(void)
 	glEnableVertexAttribArray(0);
 	glEnableVertexAttribArray(1);
 
-
- 	// Element Buffer
-	glGenBuffers(2, IndexBufferId);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),elem, GL_STATIC_DRAW);
+// Element Buffer Objects
+	glGenBuffers(1, &IndexBufferId);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexBufferId);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, es.count*es.nodes*sizeof(elem),NULL, GL_STATIC_READ);
+	glBufferSubData(GL_ELEMENT_ARRAY_BUFFER,0,es.count*es.nodes*sizeof(elem)/2,elem);
+	glBufferSubData(GL_ELEMENT_ARRAY_BUFFER,es.count*es.nodes*sizeof(elem)/2,es.count*es.nodes*sizeof(elem)/2,&elem[es.count*es.nodes/2]);
+ 	
 
 }
 
@@ -347,7 +346,7 @@ void DestroyVBO(void)
 	glDeleteBuffers(1, &BufferId);
 
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-	glDeleteBuffers(2, IndexBufferId);
+	glDeleteBuffers(1, &IndexBufferId);
 
 	glBindVertexArray(0);
 	glDeleteVertexArrays(1, &VaoId);
@@ -364,7 +363,7 @@ void DestroyVBO(void)
 		exit(-1);
 	}
 
-	// Unmap CUDA Resources
+	// UnMap CUDA Resources
     cudaGraphicsUnmapResources(1, resources);
 }
 
@@ -469,8 +468,7 @@ void DestroyShaders(void)
 void processNormalKeys(unsigned char key, int x, int y) {
 
 	if (key == 27)				// Escape
-		//exit(0);
-		glutLeaveMainLoop();
+		glutLeaveMainLoop();	// To be able to measure performance of CUDA NVP
 	if (key==32){				// Space
 		if(render==true)
 			render=false;
@@ -483,6 +481,10 @@ void processNormalKeys(unsigned char key, int x, int y) {
 		else
 			onlyNodes=true;
 	}
+	if (key == 9)				// Tab
+		save_Obj(obj_Filename, nodes, elem, ns.count, ns.dimensions, es.count, es.nodes, node_init_index);	// Save OBJ File
+//		save_tetgen(obj_Filename, nodes, elem, ns.count, ns.dimensions, es.count, es.nodes);	// Save Node File
+
 }
 
 
@@ -511,6 +513,11 @@ void processSpecialKeys(int key, int x, int y)
 		force_changed=true;
 		force_axis=3;
 		break;
+	case GLUT_KEY_F6 :
+		force_changed=true;
+		force=-force;
+		break;
+
 
 		// Rotate object with keys
 		case GLUT_KEY_LEFT : deltaAngle = -0.35f; break;
@@ -580,6 +587,7 @@ void mouseButton(int button, int state, int x, int y)
 			buttonn=1;
 			xOrigin = x;
 			yOrigin= y;
+			// std::cout<<x<<","<<y<<std::endl;
 		}
 	}
 	if (button == GLUT_RIGHT_BUTTON) {
@@ -620,15 +628,16 @@ int main(int argc, char **argv)
 
 /*#########---------OpenGL Init------------#########*/
 
-	// init GLUT and create window
+	// Init GLUT & Create Window
+	if(debug==true) std::cout<<"Initializing GLUT..."<<std::endl;	
 	glutInit(&argc, argv);
 	glutSetOption(GLUT_ACTION_ON_WINDOW_CLOSE,GLUT_ACTION_GLUTMAINLOOP_RETURNS);
 	glutInitDisplayMode(GLUT_DEPTH | GLUT_DOUBLE | GLUT_RGBA);
 	glutInitWindowPosition(100,100);
 	glutInitWindowSize(640,480);
-	glutCreateWindow("Test_TetgenModelRenderer_OpenGL_CUDA");
+	glutCreateWindow("Modal_Warping_OpenGL_CUDA");
 
-	// register callbacks
+	// Register callbacks
 	glutDisplayFunc(RenderFunction);
 	glutReshapeFunc(ResizeFunction);
 	glutIdleFunc(IdleFunction);
@@ -654,15 +663,20 @@ int main(int argc, char **argv)
 			);
 		exit(EXIT_FAILURE);
 	}
-	
-	fprintf(
-		stdout,
-		"INFO: OpenGL Version: %s\n",
-		glGetString(GL_VERSION)
-		);
+	if(debug==true){
+		fprintf(
+			stdout,
+			"INFO: OpenGL Version: %s\n",
+			glGetString(GL_VERSION)
+			);
+	}
 
+	// Background Color
 	glClearColor(0.25f, 0.25f, 0.25f, 0.0f);
 	// glClearColor(1.0f, 1.0f, 1.0f, 0.0f);
+
+	// Initialize Log File
+	init_log(logname);
 
 
 /*#########---------Ends OpenGL Init------------#########*/
@@ -676,10 +690,10 @@ int main(int argc, char **argv)
 	extern int optind;
 	int c, err = 0; 
 	int nflag=0, kflag=0;
-	string ename,nname,kname,eigenvec_name, fixedname, psyname;
+	string nname,ename,kname,eigenvec_name, fixedname, psiname;
 	static char usage[] = "usage: %s -n Node_filename [-p 1 || 0] [-t threadsonGPU] \n";
 
-	while ((c = getopt(argc, argv, "n:p:t:d:")) != -1)
+	while ((c = getopt(argc, argv, "n:p:t:d:e:")) != -1)
 		switch (c) {
 		case 'n':
 			nflag = 1;
@@ -694,19 +708,18 @@ int main(int argc, char **argv)
 			eigenvec_name.append("_vec.csv");
 			fixedname.append(optarg);
 			fixedname.append("_fixed.csv");
-			psyname.append(optarg);
-			psyname.append("_Psy.csv");
+			psiname.append(optarg);
+			psiname.append("_Psi.csv");
+			obj_Filename.append(optarg);
 			break;
-
-			// Not used atm
-		// case 'k':
-		// 	kflag = 1;
-		// 	kname.append(optarg);
-		// 	kname.append(".csv");
-		// 	break;
-		// case '?':
-		// 	err = 1;
-		// 	break;
+		case 'e':
+			// Convert to strings & append extensions
+			kname.assign(optarg);
+			kname.append(".csv");
+			eigenvec_name.assign(optarg);
+			eigenvec_name.append("_vec.csv");
+			psiname.assign(optarg);
+			psiname.append("_Psi.csv");
 		case 'p':
 			istringstream(optarg) >> parallel;
 			break;
@@ -727,8 +740,6 @@ int main(int argc, char **argv)
 	// Not used atm
 	// else if (kflag==0)
 	// {
-	// 	// TODO fix nmname to get rid of extension
-	// 	//	kname=nname;
 	// }
 
 	else if ((optind+1-1) > argc) 
@@ -739,18 +750,11 @@ int main(int argc, char **argv)
 		fprintf(stderr, usage, argv[0]);
 		exit(1);
 	} 
-	else if (err) 
+	else if (err)
 	{
 		fprintf(stderr, usage, argv[0]);
 		exit(1);
 	}
-
-	/* Print Values */
-	cout<<"NodeFile:"<<nname<<"\n";
-	cout<<"ElemFile:"<<ename<<"\n";
-	// Testing printf
-    printf("EigenFile:%s\n", kname.c_str());
-	cout<<"EigenVecsFile:"<<eigenvec_name<<"\n";
 
 	if (optind < argc)
 	{	/* Last arguments */
@@ -764,18 +768,30 @@ int main(int argc, char **argv)
 
 /*#########---------File Loading------------#########*/
 
+	std::cout<<"Loading Files..."<<std::endl;
+
+
+	if(debug==true) lines.push_back("Loading Node File...");
 	node_init_index = load_nodefile(nname.c_str(),nodes, &ns);
 
+	if(debug==true) lines.push_back("Loading Elem File...");	
 	load_elemfile(ename.c_str(),elem, &es, node_init_index);
 
+	if(debug==true) lines.push_back("Loading EigenVals File...");	
 	eigencount = load_eigenvalsfile(kname.c_str(),eigenVals);
 
+	if(debug==true) lines.push_back("Loading Fixed File...");	
 	load_fxdnodesfile(fixedname.c_str(), fixed_nodes ,&ns);
-
+	
+	if(debug==true) lines.push_back("Loading EigenVecs File...");	
 	load_eigenvecfile(eigenvec_name.c_str(), eigenVecs , &ns, eigencount);
+	
+	if(debug==true) lines.push_back("Loading Psi File...");	
+	load_Psifile(psiname.c_str(), Psi , &ns, eigencount);
+	
+	std::cout<<"Done Loading Files."<<std::endl;	
 
-	load_Psyfile(psyname.c_str(), Psy , &ns, eigencount);
-
+	if(debug==true) log(logname,lines);
 
 /*#########---------Ends File Loading---------------#########*/
 
@@ -787,6 +803,11 @@ int main(int argc, char **argv)
 	// Timestep
 	h=0.03;
 
+	std::cout<<"Allocating Arrays..."<<std::endl;
+	if(debug==true) {
+		lines.push_back("Allocating Arrays...");
+		log(logname,lines);
+	}
 	d = new float[eigencount*eigencount];
 	alpha = new float[eigencount*eigencount];
 	beta = new float[eigencount*eigencount];
@@ -800,7 +821,6 @@ int main(int argc, char **argv)
 
 	// 2 nested fors to declare square diagonal matrices
 	for(int i=0;i<eigencount;i++){
-		// Maybe only need 1 for ? - TODO
 		for(int j=0;j<eigencount;j++){
 			int index=i*eigencount+j;
 			// Only declare diagonal elements
@@ -838,9 +858,7 @@ int main(int argc, char **argv)
 	qo = new float[eigencount];
 	qd = new float[eigencount];
 	qdo = new float[eigencount];
-	u = new float[ns.count*ns.dimensions];
-	R = new float[ns.count*ns.dimensions*ns.count*ns.dimensions];
-	Ro = new float[ns.count*ns.dimensions*ns.count*ns.dimensions];
+	u = new float[ns.count*ns.dimensions];;
 
 	change_force(F, Fo, ns, force, force_axis);
 	
@@ -851,64 +869,77 @@ int main(int argc, char **argv)
 		qd[i]=0;
 		qdo[i]=0;
 	}
-
+	std::cout<<"Done Allocating Arrays."<<std::endl;	
 
 /*#########---------Ends calculation vectors allocation---------------#########*/
 
+	std::cout<<"Creating Buffer Objects..."<<std::endl;	
 	if(parallel==true)
 		CreateVBO_CUDA();
 	else
 		CreateVBO();
-	CreateShaders();
 
-	eigencount=eigencount;
+	std::cout<<"Creating Shaders..."<<std::endl;	
+	CreateShaders();	
 
-	// Print some info - TODO
-	cout<<"Nodes: "<<ns.count<<"\t";
-	cout<<"Dimensions: "<<ns.dimensions<<"\n";
-	cout<<"Elements: "<<es.count<<"\t";
-	cout<<"Nodes per Element: "<<es.nodes<<"\n";
-	std::cout<<"# Eigenvalues: "<<eigencount<<"\n";
-	std::cout<<"Eigenvectors matrix dimensions:"<<ns.count*ns.dimensions<<"x"<<eigencount<<"\n";
+	//if(debug==true){
+		std::cout<<"Nodes: "<<ns.count<<"\t";
+		std::cout<<"Dimensions: "<<ns.dimensions<<std::endl;
+		std::cout<<"Elements: "<<es.count<<"\t";
+		std::cout<<"Nodes per Element: "<<es.nodes<<std::endl;
+		std::cout<<"# Eigenvalues: "<<eigencount<<std::endl;
+		std::cout<<"Eigenvectors matrix dimensions: "<<ns.count*ns.dimensions<<"x"<<eigencount<<std::endl;
+//	}
 
-	nodes_orig=new float[ns.count*ns.dimensions];
-						
+	// Save original node locations on a different variable
+	nodes_orig=new float[ns.count*ns.dimensions];					
 	std::copy(nodes,nodes+ns.count*ns.dimensions,nodes_orig);
 
-	// Allocate GPU globals before main loop instead of doing it every time
-	allocate_GPUmem(nodes, alphaI, alpha, beta, gama, eigenVecs, Psy, ns.count, ns.dimensions, ns.fixed_count, eigencount);
 
+	if(parallel==true){
+		// Allocate GPU globals before main loop instead of doing it every time
+		if(debug==true) std::cout<<"Allocating GPU globals..."<<std::endl;	
+		allocate_GPUmem(nodes, alphaI, alpha, beta, gama, eigenVecs, Psi, ns.count, ns.dimensions, ns.fixed_count, eigencount);
+	}
+
+	// For OpenGL performance
 	fps_start = glutGet(GLUT_ELAPSED_TIME);
 
+	if(debug==true) std::cout<<"Looping on OpenGL..."<<std::endl;	
 	glutMainLoop();
 
-	free_GPUnodes();
-
-	cudaDeviceReset();
+	if(parallel==true){
+		if(debug==true) std::cout<<"Freeing up GPU memory..."<<std::endl;	
+		// Free up memory
+		free_GPUnodes();
+		// Reset GPU
+		cudaDeviceReset();
+	}
 
 
 /*#########---------Free System Memory---------------#########*/
 
-	free(nodes);
-	free(elem);
-	free(eigenVals);
-	free(eigenVecs);
-	free(d);
-	free(alpha);
-	free(alphaI);
-	free(beta);
-	free(gama);
-	free(M);
-	free(C);
-	free(F);
-	free(Fo);
-	free(q);
-	free(qo);
-	free(qd);
-	free(qdo);
-	free(u);
-	free(nodes_orig);
-	free(Psy);
+	if(debug==true) std::cout<<"Freeing up system memory..."<<std::endl;	
+	delete nodes;
+	delete elem;
+	delete eigenVals;
+	delete eigenVecs;
+	delete d;
+	delete alpha;
+	delete alphaI;
+	delete beta;
+	delete gama;
+	delete M;
+	delete C;
+	delete F;
+	delete Fo;
+	delete q;
+	delete qo;
+	delete qd;
+	delete qdo;
+	delete u;
+	delete nodes_orig;
+	delete Psi;
 
 /*#########---------Free Memory---------------#########*/
 

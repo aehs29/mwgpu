@@ -54,6 +54,7 @@ EXTRA_CCFLAGS     ?=
 IPATH= -I/usr/include
 LPATH= -L/usr/lib
 LDLIBS = -lglut -lGL -lGLU -lm -lGLEW -lrt -g
+#LDLIBS = -lglut -lGL -lGLU -lm -lGLEW -lrt -pg
 
 
 # OS-specific build flags
@@ -132,7 +133,7 @@ mwgpu.o: mwgpu.cu
 #cppIntegration_gold.o: cppIntegration_gold.cpp
 #	$(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
-main.o: main.cpp displacement.cpp file_loading.cpp
+main.o: main.cpp displacement.cpp file_handling.cpp
 	$(NVCC) $(IPATH) $(LPATH) $(LDLIBS) $(INCLUDES)  $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
 mwgpu: mwgpu.o main.o shader_utils.o

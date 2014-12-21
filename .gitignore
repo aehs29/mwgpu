@@ -19,3 +19,17 @@
 *.exe
 *.out
 *.app
+log
+armadillo_50k_tet.ele~
+bar_com_fixed.csv~
+bar_com.node~
+file_handling.cpp~
+file_handling.h~
+main.cpp~
+Makefile~
+mwgpu.cu~
+mwgpu.f.glsl~
+mwgpu.fl.glsl~
+mwgpu.v.glsl~
+README~
+README.md~

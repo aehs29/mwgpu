@@ -97,6 +97,7 @@ Modal Warping on GPU v1.3.5
 TODO:
 
 OpenGL:
+- Add own shader loading functions.
 - Render Info Text
 - Click to fix face functionality?***
 
@@ -110,6 +111,7 @@ CUDA:
 - Change float64 to float32
 - Coalesced memory comments
 - Use streams for kernel launches
+- Use pinned memory / async
 
 C++:
 - GetFaces()

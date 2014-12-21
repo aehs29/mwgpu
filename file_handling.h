@@ -6,6 +6,8 @@
 #include <sstream>
 #include <stdlib.h>
 #include <stdio.h>
+#include <ctime>
+#include <vector>
 
 
 /* Structures */

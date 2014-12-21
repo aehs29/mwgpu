@@ -1,4 +1,4 @@
-#include "file_loading.h"
+#include "file_handling.h"
 
 using namespace std;
 
@@ -98,7 +98,7 @@ int load_nodefile(const char * nodefile_name, float *& nodes , nodes_struct * ns
 }
 
 
-void load_elemfile(const char * elemfile_name, GLshort *& elem , elem_struct * es, int node_init_index){
+void load_elemfile(const char * elemfile_name, GLushort *& elem , elem_struct * es, int node_init_index){
 
 ifstream elem_file(elemfile_name);	
 	int line_count=0;
@@ -125,7 +125,7 @@ ifstream elem_file(elemfile_name);
 						//Get Number of Element Nodes
 						es->nodes=atoi(cell.c_str());
 						// Allocate array
-						elem=new GLshort[es->count*es->nodes];
+						elem=new GLushort[es->count*es->nodes];
 					}
 				}
 				else
@@ -303,10 +303,10 @@ void load_eigenvecfile(const char * evecfile_name, float *& eigenVecs , nodes_st
 
 }
 
-void load_Psyfile(const char * psyfile_name, float *& Psy , nodes_struct * ns, int eigencount){
+void load_Psifile(const char * psifile_name, float *& Psi , nodes_struct * ns, int eigencount){
 
 
-	std::ifstream psy_file(psyfile_name);
+	std::ifstream psi_file(psifile_name);
 	string line;
 	// Columns should be same as eigenVals count
 	// Rows should be the same as nodes x dimensions
@@ -314,12 +314,12 @@ void load_Psyfile(const char * psyfile_name, float *& Psy , nodes_struct * ns, i
 
 
 	// Allocate array
-	Psy=new float[(ns->count-ns->fixed_count)*ns->dimensions*eigencount];
+	Psi=new float[(ns->count-ns->fixed_count)*ns->dimensions*eigencount];
 
 	int row_count=0;				// reset value
 
 	// Read file to initialize array
-	while (std::getline(psy_file,line)){
+	while (std::getline(psi_file,line)){
 
 		// Get rid of carriage return
 		if(line[line.length()-1]=='\r')
@@ -338,11 +338,150 @@ void load_Psyfile(const char * psyfile_name, float *& Psy , nodes_struct * ns, i
 				float converted = strtof(colVal.c_str(),&p);
 				if (*p){}
 				else{
-					Psy[(eigencount*row_count)+col_countEvec]=converted;
+					Psi[(eigencount*row_count)+col_countEvec]=converted;
 				}
 			}
 			col_countEvec++;
 		}
 		row_count++;
 	}
+}
+
+void save_Obj(string filename, float *nodes, GLushort *elem, int node_count, int node_dimensions, int elem_count, int elem_nodes){
+	time_t t = time(0);   // get time now
+	struct tm * now = localtime( & t ); // Convert to Localtime
+
+	// Append to filename
+	std::stringstream ss;
+	ss<<"_"<<now->tm_min<<"_"<<now->tm_sec;
+	filename.append(ss.str());
+	filename.append(".obj");
+	
+	// ToDo Print info of the file
+	ofstream objfile (filename.c_str());
+	if (objfile.is_open())
+	{
+		// Output nodes
+		for(int i=0;i<node_count;i++){
+			objfile << "v ";
+			for(int j=0;j<node_dimensions;j++){
+				objfile << nodes[i*node_dimensions+j]<<" ";
+			}
+			objfile << std::endl;
+		}
+		objfile << std::endl;
+
+		// Output elems
+		for(int i=0;i<elem_count;i++){
+			objfile << "f ";
+			for(int j=0;j<elem_nodes;j++){
+				objfile << elem[i*elem_nodes+j]+1<<" ";
+			}
+			objfile << std::endl;
+		}		
+		objfile.close();
+	}
+	else cout << "Unable to write obj file";
+
+}
+
+void log(std::string filename, vector<string> lines){
+
+	std::ofstream logfile;
+	logfile.open(filename.c_str(), std::ofstream::out | std::ofstream::app);
+	if (logfile.is_open())
+	{
+		// logfile<<tm_mday<<"/"<<tm_mon+1<<"/"<<tm_year+1990<<";
+		for(int i=0;i <lines.size();i++){
+			logfile<<lines.at(i)<<std::endl;
+		}
+		logfile.close();
+	}
+	else cout << "Unable to write log";
+	lines.clear();
+}
+
+void init_log(std::string filename){
+
+	time_t t = time(0);   // get time now
+	struct tm * now = localtime( & t ); // Convert to Localtime
+	std::stringstream ss;
+	ss<<now->tm_mday<<"/"<<now->tm_mon+1<<"/"<<now->tm_year+1990<<" -"<<now->tm_hour<<":"<<now->tm_min<<std::endl;
+	
+	std::ofstream logfile;
+	logfile.open(filename.c_str(), std::ofstream::out | std::ofstream::app);
+	if (logfile.is_open())
+	{
+		logfile<<std::endl<<std::endl;
+		// logfile<<tm_mday<<"/"<<tm_mon+1<<"/"<<tm_year+1990<<std::endl;
+		// logfile<<tm_min;
+		logfile<<ss.str();
+		logfile<<"Starting..."<<std::endl;
+
+	}
+	else cout << "Unable to write log";
+}
+
+void save_tetgen(string filename, float *nodes, GLushort *elem, int node_count, int node_dimensions, int elem_count, int elem_nodes){
+	time_t t = time(0);   // get time now
+	struct tm * now = localtime( & t ); // Convert to Localtime
+
+	std::string elemfilename;
+	elemfilename=filename;
+
+	// Append to filename
+	std::stringstream ss;
+	ss<<"_"<<now->tm_min<<"_"<<now->tm_sec;
+	filename.append(ss.str());
+	filename.append(".node");
+	elemfilename.append(ss.str());
+	elemfilename.append(".ele");
+	
+	// ToDo Print info of the file
+	ofstream nodefile (filename.c_str());
+	if (nodefile.is_open())
+	{
+		nodefile<<node_count<<" "<<node_dimensions<<" 0 0"<<std::endl;
+		// Output nodes
+		for(int i=0;i<node_count;i++){
+			nodefile << i<<" ";
+			for(int j=0;j<node_dimensions;j++){
+				nodefile << nodes[i*node_dimensions+j]<<" ";
+			}
+			nodefile << std::endl;
+		}
+		nodefile << std::endl;
+
+		nodefile.close();
+
+		// Output elems
+		// for(int i=0;i<elem_count;i++){
+		// 	objfile << "f ";
+		// 	for(int j=0;j<elem_nodes;j++){
+		// 		objfile << elem[i*elem_nodes+j]<<" ";
+		// 	}
+		// 	objfile << std::endl;
+		// }		
+		// objfile.close();
+	}
+	else cout << "Unable to write node file";
+
+	ofstream elemfile (elemfilename.c_str());
+	if (elemfile.is_open())
+	{
+		elemfile<<elem_count<<" "<<elem_nodes<<" 0"<<std::endl;
+		// Output elems
+		for(int i=0;i<elem_count;i++){
+			elemfile << i<<" ";
+			for(int j=0;j<elem_nodes;j++){
+				elemfile << elem[i*elem_nodes+j]<<" ";
+			}
+			elemfile << std::endl;
+		}
+		elemfile << std::endl;
+		elemfile.close();
+
+	}
+	else cout << "Unable to write ele file";
+
 }
